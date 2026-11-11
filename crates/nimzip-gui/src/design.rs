@@ -702,7 +702,7 @@ pub fn stepper(
                 .items_center()
                 .justify_center()
                 .text_size(crate::theme::font_px(14.0))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight::NORMAL)
                 .text_color(palette.text)
                 .child(value.into()),
         )
