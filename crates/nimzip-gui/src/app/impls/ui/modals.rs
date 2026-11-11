@@ -2615,6 +2615,7 @@ impl MainView {
                 .h(px(table_height))
                 .flex_none()
                 .overflow_x_scroll()
+                .restrict_scroll_to_axis()
                 .track_scroll(&self.hash_table_scroll)
                 .child(table)
                 .when(needs_h_scroll, |this| {
