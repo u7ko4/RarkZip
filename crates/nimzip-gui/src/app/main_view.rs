@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use gpui_kit::component::slider::Slider;
+use gpui_kit::component::tooltip::Tooltip;
 
 use crate::app::*;
 
@@ -172,18 +173,15 @@ impl MainView {
             + usize::from(self.settings.view.preview_enabled) as f32 * 200.0;
         let available = window.viewport_size().width.as_f32() - panel_width - 20.0;
         let compact = available < 620.0;
-        let dense = available < 440.0;
 
         let nav_active = self.settings.view.show_tree;
         let preview_active = self.settings.view.preview_enabled;
         let comment_active = self.settings.view.show_comment;
-        let show_panel_labels = !dense;
         let nav = self.file_toolbar_toggle(
             "file-toolbar-nav",
             "导航",
             IconName::ListTree,
             nav_active,
-            show_panel_labels,
             |this, cx| this.toggle_tree_panel(cx),
             cx,
         );
@@ -192,7 +190,6 @@ impl MainView {
             "预览",
             IconName::Image,
             preview_active,
-            show_panel_labels,
             |this, cx| this.toggle_preview_panel(cx),
             cx,
         );
@@ -201,8 +198,16 @@ impl MainView {
             "注释",
             IconName::MessageSquareText,
             comment_active,
-            show_panel_labels,
             |this, cx| this.toggle_comment_panel(cx),
+            cx,
+        );
+
+        let close_archive = self.file_toolbar_toggle(
+            "file-toolbar-close",
+            "关闭压缩包",
+            IconName::X,
+            false,
+            |this, cx| this.close_current_archive(cx),
             cx,
         );
 
@@ -211,7 +216,6 @@ impl MainView {
             "列表",
             IconName::List,
             FileViewMode::List,
-            !compact,
             cx,
         );
         let icons_segment = self.file_view_segment(
@@ -219,7 +223,6 @@ impl MainView {
             "图标",
             IconName::LayoutGrid,
             FileViewMode::Icons,
-            !compact,
             cx,
         );
         let segments = div()
@@ -274,6 +277,8 @@ impl MainView {
             .child(nav)
             .child(preview)
             .child(comment)
+            .child(div().w(px(1.0)).h(px(18.0)).mx(px(2.0)).bg(palette.line))
+            .child(close_archive)
             .child(div().flex_1())
             .when_some(zoom, |this, zoom| this.child(zoom))
             .child(segments)
@@ -287,7 +292,6 @@ impl MainView {
         label: &'static str,
         icon_name: IconName,
         active: bool,
-        show_label: bool,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -296,8 +300,8 @@ impl MainView {
             .id(id)
             .role(Role::Button)
             .aria_label(label)
+            .w(px(32.0))
             .h(px(32.0))
-            .px(px(8.0))
             .rounded(px(8.0))
             .border_1()
             .border_color(if active {
@@ -312,10 +316,11 @@ impl MainView {
             })
             .flex()
             .items_center()
-            .gap(px(5.0))
+            .justify_center()
             .text_size(crate::theme::font_px(12.5))
             .text_color(if active { palette.accent } else { palette.sub })
             .cursor_pointer()
+            .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
             .when(!active, |this| {
                 this.hover(|style| style.bg(palette.hover).border_color(palette.line_strong))
             })
@@ -327,7 +332,6 @@ impl MainView {
                 if active { palette.accent } else { palette.sub },
                 15.0,
             ))
-            .when(show_label, |this| this.child(label))
             .into_any_element()
     }
 
@@ -338,7 +342,6 @@ impl MainView {
         label: &'static str,
         icon_name: IconName,
         mode: FileViewMode,
-        show_label: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
@@ -347,13 +350,14 @@ impl MainView {
             .id(id)
             .role(Role::Button)
             .aria_label(label)
+            .w(px(34.0))
             .h_full()
-            .px(px(10.0))
             .flex()
             .items_center()
-            .gap(px(5.0))
+            .justify_center()
             .text_size(crate::theme::font_px(12.5))
             .cursor_pointer()
+            .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
             .bg(if active {
                 palette.accent_soft
             } else {
@@ -367,7 +371,6 @@ impl MainView {
                 if active { palette.accent } else { palette.sub },
                 15.0,
             ))
-            .when(show_label, |this| this.child(label))
             .into_any_element()
     }
 
