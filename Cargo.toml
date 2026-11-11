@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nimzip-engine",
+    "crates/nimzip-cli",
+    "crates/nimzip-gui",
+    "crates/nimzip-shell",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+authors = ["NimZip Contributors"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
