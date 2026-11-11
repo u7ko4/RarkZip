@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::archive::{open_archive, test_password, ArchiveInfo, OpenOptions};
 use crate::error::{EngineError, Result};
 use crate::format::{ArchiveFormat, Codepage};
-use crate::paths::archive_stem;
+use crate::paths::{archive_stem, unique_path};
 use crate::progress::{check_cancelled, Phase, Progress, ProgressSink};
 use crate::security::{delete_to_recycle, read_motw};
 use crate::sniff;
@@ -110,10 +110,11 @@ pub fn smart_target(path: &Path, info: &ArchiveInfo) -> SmartTarget {
         };
     }
 
+    let folder = unique_path(&parent, &archive_stem(path), None);
     SmartTarget {
-        dest: parent.join(archive_stem(path)),
+        dest: folder,
         strip_prefix: None,
-        reason: "常规：解压到同名文件夹".to_string(),
+        reason: "多根条目：解压到不冲突的同名文件夹".to_string(),
     }
 }
 

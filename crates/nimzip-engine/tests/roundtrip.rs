@@ -572,6 +572,36 @@ fn smart_extract_multiple_roots_uses_archive_folder() {
 }
 
 #[test]
+fn smart_extract_uses_unique_archive_folder_when_name_exists() {
+    let temp = TempDir::new().unwrap();
+    let first = temp.path().join("first.txt");
+    let second = temp.path().join("second.txt");
+    write(&first, b"first");
+    write(&second, b"second");
+    let archive = temp.path().join("multi.zip");
+    create_archive(
+        &[first, second],
+        &archive,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+    fs::create_dir(temp.path().join("multi")).unwrap();
+
+    let result = extract_archive(&archive, &ExtractOptions::default(), &NoopSink).unwrap();
+    assert_eq!(result.dest, temp.path().join("multi (2)"));
+    assert!(temp.path().join("multi").is_dir());
+    assert_eq!(
+        fs::read(temp.path().join("multi (2)/first.txt")).unwrap(),
+        b"first"
+    );
+    assert_eq!(
+        fs::read(temp.path().join("multi (2)/second.txt")).unwrap(),
+        b"second"
+    );
+}
+
+#[test]
 fn archive_with_single_top_level_file_smart_targets_current_dir() {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("only.txt");
