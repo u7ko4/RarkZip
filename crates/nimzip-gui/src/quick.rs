@@ -107,6 +107,18 @@ struct ConflictInfo {
     existing_size: u64,
 }
 
+#[derive(Debug, Clone)]
+struct SmartConflictInfo {
+    entry_index: usize,
+    name: String,
+    target_path: PathBuf,
+    rename_path: PathBuf,
+    incoming_size: u64,
+    existing_size: u64,
+    incoming_modified: Option<i64>,
+    existing_modified: Option<i64>,
+}
+
 #[derive(Debug)]
 enum QuickEvent {
     NeedPassword,
@@ -115,6 +127,11 @@ enum QuickEvent {
         conflicts: usize,
         first: Option<ConflictInfo>,
         selected: Option<Vec<usize>>,
+    },
+    SmartPrepared {
+        dest: PathBuf,
+        conflicts: Vec<SmartConflictInfo>,
+        all_indices: Vec<usize>,
     },
     Progress {
         percent: f32,
@@ -194,6 +211,12 @@ pub struct QuickView {
     password_attempted: bool,
     conflict: Option<ConflictInfo>,
     conflict_choice: ConflictChoice,
+    smart_dest: Option<PathBuf>,
+    smart_conflicts: Vec<SmartConflictInfo>,
+    smart_all_indices: Vec<usize>,
+    smart_conflict_index: usize,
+    smart_conflict_choices: Vec<ConflictChoice>,
+    smart_apply_all: bool,
     prepared_selected: Option<Vec<usize>>,
     total_entries: usize,
     percent: f32,
@@ -282,6 +305,12 @@ impl QuickView {
             password_attempted: false,
             conflict: None,
             conflict_choice: ConflictChoice::Overwrite,
+            smart_dest: None,
+            smart_conflicts: Vec::new(),
+            smart_all_indices: Vec::new(),
+            smart_conflict_index: 0,
+            smart_conflict_choices: Vec::new(),
+            smart_apply_all: true,
             prepared_selected: None,
             total_entries: 0,
             percent: 0.0,
@@ -382,6 +411,27 @@ impl QuickView {
                     self.resize_for_step(cx);
                 } else {
                     self.start_extract(cx);
+                }
+            }
+            QuickEvent::SmartPrepared {
+                dest,
+                conflicts,
+                all_indices,
+            } => {
+                self.running = false;
+                self.smart_dest = Some(dest.clone());
+                self.active_dest = Some(dest);
+                self.smart_conflicts = conflicts;
+                self.smart_all_indices = all_indices;
+                self.smart_conflict_index = 0;
+                self.smart_conflict_choices.clear();
+                self.conflict_choice = ConflictChoice::Overwrite;
+                self.smart_apply_all = true;
+                if self.smart_conflicts.is_empty() {
+                    self.start_smart_extract(cx);
+                } else {
+                    self.step = Step::Conflict;
+                    self.resize_for_step(cx);
                 }
             }
             QuickEvent::Progress { percent, current } => {
@@ -593,6 +643,104 @@ impl QuickView {
         cx.notify();
     }
 
+    fn spawn_smart_prepare(&mut self, cx: &mut Context<Self>) {
+        let QuickAction::ExtractPreset {
+            archive,
+            preset: ExtractPreset::Smart,
+            ..
+        } = self.action.clone()
+        else {
+            return;
+        };
+        self.begin_progress(archive.display().to_string(), cx);
+        let sender = self.sender.clone();
+        let password = self.password.clone();
+        let control = self.control.clone();
+
+        std::thread::spawn(move || {
+            let mut result = open_archive(
+                &archive,
+                &OpenOptions {
+                    password: password.clone(),
+                    codepage: Codepage::Auto,
+                },
+            );
+            if matches!(&result, Err(error) if error.is_password_related())
+                && password.is_none()
+                && nimzip_engine::supports_quick_password_test(&archive)
+            {
+                let book = PasswordBook::load_default();
+                if let Ok(Some(found)) = book.try_all(&archive) {
+                    result = open_archive(
+                        &archive,
+                        &OpenOptions {
+                            password: Some(found),
+                            codepage: Codepage::Auto,
+                        },
+                    );
+                }
+            }
+            let info = match result {
+                Ok(info) => info,
+                Err(error) if error.is_password_related() => {
+                    let _ = sender.send(QuickEvent::NeedPassword);
+                    return;
+                }
+                Err(error) => {
+                    let _ = sender.send(QuickEvent::Failed(error.to_string()));
+                    return;
+                }
+            };
+            if info.encrypted && password.is_none() {
+                let _ = sender.send(QuickEvent::NeedPassword);
+                return;
+            }
+            if control.cancelled.load(Ordering::Relaxed) {
+                let _ = sender.send(QuickEvent::Cancelled);
+                return;
+            }
+            let target = nimzip_engine::smart_target(&archive, &info);
+            let all_indices = info
+                .entries
+                .iter()
+                .filter(|entry| !entry.is_dir)
+                .map(|entry| entry.index)
+                .collect();
+            let mut conflicts = Vec::new();
+            for entry in info.entries.iter().filter(|entry| !entry.is_dir) {
+                let target_path = target
+                    .dest
+                    .join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if !target_path.exists() {
+                    continue;
+                }
+                let existing_size = std::fs::metadata(&target_path)
+                    .map(|meta| meta.len())
+                    .unwrap_or(0);
+                let existing_modified = std::fs::metadata(&target_path)
+                    .ok()
+                    .and_then(|meta| meta.modified().ok())
+                    .and_then(nimzip_engine::util::system_time_to_unix);
+                conflicts.push(SmartConflictInfo {
+                    entry_index: entry.index,
+                    name: entry.path.clone(),
+                    target_path: target_path.clone(),
+                    rename_path: conflict_rename_path(&target_path),
+                    incoming_size: entry.size,
+                    existing_size,
+                    incoming_modified: entry.modified,
+                    existing_modified,
+                });
+            }
+            let _ = sender.send(QuickEvent::SmartPrepared {
+                dest: target.dest,
+                conflicts,
+                all_indices,
+            });
+        });
+        cx.notify();
+    }
+
     fn resize_for_step(&mut self, cx: &mut Context<Self>) {
         // 内容区随界面字号缩放；去掉“内容/最近处理”后，进度与结果页按实际内容收紧高度。
         let font_delta = (crate::theme::ui_font_size() - 13.0) * 18.0;
@@ -608,6 +756,133 @@ impl QuickView {
         let _ = self.window_handle.update(cx, |_, window, _| {
             window.resize(size(px(width), px(height)));
         });
+    }
+
+    fn submit_smart_conflict(&mut self, cx: &mut Context<Self>) {
+        let total = self.smart_conflicts.len();
+        let choice = self.conflict_choice;
+        if self.smart_apply_all {
+            while self.smart_conflict_choices.len() < total {
+                self.smart_conflict_choices.push(choice);
+            }
+        } else {
+            self.smart_conflict_choices.push(choice);
+            if self.smart_conflict_choices.len() < total {
+                self.smart_conflict_index = self.smart_conflict_choices.len();
+                self.conflict_choice = ConflictChoice::Overwrite;
+                cx.notify();
+                return;
+            }
+        }
+        self.start_smart_extract(cx);
+    }
+
+    fn start_smart_extract(&mut self, cx: &mut Context<Self>) {
+        let QuickAction::ExtractPreset {
+            archive,
+            preset: ExtractPreset::Smart,
+            delete,
+        } = self.action.clone()
+        else {
+            return;
+        };
+        let dest = self
+            .smart_dest
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let mut selected = self.smart_all_indices.clone();
+        let mut rename_jobs = Vec::new();
+        for (conflict, choice) in self
+            .smart_conflicts
+            .iter()
+            .zip(self.smart_conflict_choices.iter())
+        {
+            if matches!(choice, ConflictChoice::Skip | ConflictChoice::Rename) {
+                selected.retain(|index| *index != conflict.entry_index);
+            }
+            if *choice == ConflictChoice::Rename {
+                rename_jobs.push(conflict.clone());
+            }
+        }
+        let selected = (selected.len() != self.smart_all_indices.len()).then_some(selected);
+        let main_options = self.extract_options(ExtractMode::Smart, delete, true, selected);
+        let rename_options = self.extract_options(ExtractMode::Smart, false, true, None);
+
+        self.active_dest = Some(dest);
+        self.begin_progress(archive.display().to_string(), cx);
+        let control = self.control.clone();
+        let sender = self.sender.clone();
+        let sink = QuickSink::new(sender.clone(), control.clone());
+        std::thread::spawn(move || {
+            let mut renamed_files = 0usize;
+            let mut renamed_bytes = 0u64;
+            for conflict in rename_jobs {
+                let temp = std::env::temp_dir().join("NimZip").join(format!(
+                    "rename-{}-{}",
+                    std::process::id(),
+                    conflict.entry_index
+                ));
+                let _ = std::fs::remove_dir_all(&temp);
+                if let Err(error) = std::fs::create_dir_all(&temp) {
+                    let _ = sender.send(QuickEvent::Failed(format!("创建临时目录失败：{error}")));
+                    return;
+                }
+                let mut options = rename_options.clone();
+                options.mode = ExtractMode::Custom(temp.clone());
+                options.selected = Some(vec![conflict.entry_index]);
+                options.nested_depth = 0;
+                options.delete_archive = false;
+                match extract_archive(&archive, &options, &nimzip_engine::NoopSink) {
+                    Ok(outcome) => {
+                        let source =
+                            temp.join(conflict.name.replace('/', std::path::MAIN_SEPARATOR_STR));
+                        if let Some(parent) = conflict.rename_path.parent() {
+                            if let Err(error) = std::fs::create_dir_all(parent) {
+                                let _ = std::fs::remove_dir_all(&temp);
+                                let _ = sender
+                                    .send(QuickEvent::Failed(format!("创建目标目录失败：{error}")));
+                                return;
+                            }
+                        }
+                        let moved = std::fs::rename(&source, &conflict.rename_path).or_else(|_| {
+                            std::fs::copy(&source, &conflict.rename_path)
+                                .map(|_| ())
+                                .and_then(|_| std::fs::remove_file(&source))
+                        });
+                        if let Err(error) = moved {
+                            let _ = std::fs::remove_dir_all(&temp);
+                            let _ = sender
+                                .send(QuickEvent::Failed(format!("重命名解压文件失败：{error}")));
+                            return;
+                        }
+                        renamed_files += 1;
+                        renamed_bytes += outcome.bytes;
+                    }
+                    Err(error) => {
+                        let _ = std::fs::remove_dir_all(&temp);
+                        let _ = sender.send(QuickEvent::Failed(error.to_string()));
+                        return;
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&temp);
+            }
+            match extract_archive(&archive, &main_options, &sink) {
+                Ok(outcome) => {
+                    let _ = sender.send(QuickEvent::Extracted {
+                        dest: outcome.dest,
+                        files: outcome.files + renamed_files,
+                        bytes: outcome.bytes + renamed_bytes,
+                    });
+                }
+                Err(error) if error.is_password_related() => {
+                    let _ = sender.send(QuickEvent::NeedPassword);
+                }
+                Err(error) => {
+                    let _ = sender.send(QuickEvent::Failed(error.to_string()));
+                }
+            }
+        });
+        cx.notify();
     }
 
     fn begin_progress(&mut self, current: String, cx: &mut Context<Self>) {
@@ -708,6 +983,10 @@ impl QuickView {
         else {
             return;
         };
+        if preset == ExtractPreset::Smart {
+            self.spawn_smart_prepare(cx);
+            return;
+        }
         let mode = match preset {
             ExtractPreset::Here => ExtractMode::Here,
             ExtractPreset::Smart => ExtractMode::Smart,
@@ -1436,7 +1715,254 @@ impl QuickView {
             .into_any_element()
     }
 
+    fn render_smart_conflict_step(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let palette = self.palette;
+        let index = self.smart_conflict_index;
+        let total = self.smart_conflicts.len();
+        let Some(conflict) = self.smart_conflicts.get(index).cloned() else {
+            return div().into_any_element();
+        };
+        let choice = self.conflict_choice;
+        let time_panel = |title: &'static str, size: u64, modified: Option<i64>| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .p(px(12.0))
+                .rounded(px(crate::theme::RADIUS_CONTROL))
+                .border_1()
+                .border_color(palette.line)
+                .bg(palette.panel)
+                .flex()
+                .flex_col()
+                .gap(px(7.0))
+                .child(
+                    div()
+                        .text_size(crate::theme::caption())
+                        .text_color(palette.muted)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(crate::theme::body())
+                        .text_color(palette.text)
+                        .child(format_size(size)),
+                )
+                .child(
+                    div()
+                        .text_size(crate::theme::caption())
+                        .text_color(palette.sub)
+                        .child(conflict_time(modified)),
+                )
+        };
+        let rename_label = format!(
+            "重命名(R)：{}",
+            conflict
+                .rename_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| conflict.name.clone())
+        );
+        let apply_entity = cx.entity();
+        let checkbox = div()
+            .id("smart-apply-all")
+            .role(Role::CheckBox)
+            .aria_label("应用到全部文件(A)")
+            .aria_toggled(if self.smart_apply_all {
+                Toggled::True
+            } else {
+                Toggled::False
+            })
+            .flex()
+            .items_center()
+            .gap(px(9.0))
+            .cursor_pointer()
+            .text_size(crate::theme::body())
+            .text_color(palette.text)
+            .on_click(move |_, _, app| {
+                apply_entity.update(app, |this, cx| {
+                    this.smart_apply_all = !this.smart_apply_all;
+                    cx.notify();
+                });
+            })
+            .child(crate::design::check_box_visual(
+                &palette,
+                self.smart_apply_all,
+                false,
+            ))
+            .child("应用到全部文件(A)");
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .p(px(22.0))
+            .gap(px(12.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(crate::theme::body())
+                            .text_color(palette.sub)
+                            .child("存在相同的文件"),
+                    )
+                    .when(total > 1, |this| {
+                        this.child(
+                            div()
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.muted)
+                                .child(format!("{} / {}", index + 1, total)),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .truncate()
+                    .font_family("Cascadia Mono")
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.accent)
+                    .child(conflict.target_path.display().to_string()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .child(time_panel(
+                        "现有文件",
+                        conflict.existing_size,
+                        conflict.existing_modified,
+                    ))
+                    .child(time_panel(
+                        "要解压的文件",
+                        conflict.incoming_size,
+                        conflict.incoming_modified,
+                    )),
+            )
+            .child(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.sub)
+                    .child("选择以下选项："),
+            )
+            .child(self.smart_choice_row(
+                "smart-skip",
+                "跳过(S)".to_string(),
+                ConflictChoice::Skip,
+                choice == ConflictChoice::Skip,
+                cx,
+            ))
+            .child(self.smart_choice_row(
+                "smart-overwrite",
+                "覆盖(O)".to_string(),
+                ConflictChoice::Overwrite,
+                choice == ConflictChoice::Overwrite,
+                cx,
+            ))
+            .child(self.smart_choice_row(
+                "smart-rename",
+                rename_label,
+                ConflictChoice::Rename,
+                choice == ConflictChoice::Rename,
+                cx,
+            ))
+            .child(checkbox)
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(10.0))
+                    .child(
+                        Button::new("smart-conflict-cancel")
+                            .label("取消")
+                            .outline()
+                            .h(px(CONTROL_HEIGHT))
+                            .px(px(16.0))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_window(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("smart-conflict-ok")
+                            .label("确定")
+                            .primary()
+                            .h(px(CONTROL_HEIGHT))
+                            .px(px(18.0))
+                            .on_click(cx.listener(|this, _, _, cx| this.submit_smart_conflict(cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn smart_choice_row(
+        &self,
+        id: &'static str,
+        label: String,
+        choice: ConflictChoice,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let palette = self.palette;
+        let entity = cx.entity();
+        div()
+            .id(id)
+            .role(Role::Button)
+            .aria_label(label.clone())
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .cursor_pointer()
+            .text_size(crate::theme::body())
+            .text_color(if selected {
+                palette.accent
+            } else {
+                palette.text
+            })
+            .on_click(move |_, _, app| {
+                entity.update(app, |this, cx| {
+                    this.conflict_choice = choice;
+                    cx.notify();
+                });
+            })
+            .child(
+                div()
+                    .w(px(17.0))
+                    .h(px(17.0))
+                    .flex_none()
+                    .rounded(px(99.0))
+                    .border_1()
+                    .border_color(if selected {
+                        palette.accent
+                    } else {
+                        palette.line_strong
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(selected, |this| {
+                        this.child(
+                            div()
+                                .w(px(9.0))
+                                .h(px(9.0))
+                                .rounded(px(99.0))
+                                .bg(palette.accent),
+                        )
+                    }),
+            )
+            .child(label)
+            .into_any_element()
+    }
+
     fn render_conflict_step(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.smart_conflicts.is_empty() {
+            return self.render_smart_conflict_step(cx);
+        }
         let palette = self.palette;
         let conflict = self.conflict.clone();
         let choice = self.conflict_choice;
@@ -2060,6 +2586,28 @@ impl Render for QuickView {
             .when_some(titlebar, |this, titlebar| this.child(titlebar))
             .child(self.render_body(window, cx))
             .into_any_element()
+    }
+}
+
+fn conflict_rename_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    nimzip_engine::paths::unique_path(parent, &stem, extension)
+}
+
+fn conflict_time(timestamp: Option<i64>) -> String {
+    use chrono::{Local, TimeZone};
+    match timestamp {
+        Some(ts) if ts > 0 => Local
+            .timestamp_opt(ts, 0)
+            .single()
+            .map(|date| date.format("%Y/%m/%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "—".to_string()),
+        _ => "—".to_string(),
     }
 }
 
