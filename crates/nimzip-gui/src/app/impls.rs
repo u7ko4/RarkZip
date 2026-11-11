@@ -956,10 +956,6 @@ impl MainView {
             }
             self.hash_batch_algorithms.remove(position);
         } else {
-            if self.hash_batch_algorithms.len() >= 6 {
-                self.show_toast("最多同时显示 6 个哈希算法", ToastKind::Info, cx);
-                return;
-            }
             self.hash_batch_algorithms.push(algorithm);
         }
         self.hash_batch_algorithms.sort_by_key(|candidate| {

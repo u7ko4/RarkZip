@@ -61,7 +61,8 @@ pub use recovery::{
 pub use repair::{repair_zip, RepairReport};
 pub use settings::{
     data_dir, passwords_path, settings_path, AdvancedSettings, CompressionSettings,
-    ExtractionSettings, GeneralSettings, SecuritySettings, Settings, UiSettings, ViewSettings,
+    ExtractionSettings, GeneralSettings, HashSettings, SecuritySettings, Settings, UiSettings,
+    ViewSettings,
 };
 pub use sfx::{create_sfx, detect_sfx, extract_sfx, SfxConfig, SfxInfo};
 pub use util::{format_ratio, format_size, format_unix_time};

@@ -35,7 +35,7 @@ impl MainView {
                     .text_color(palette.muted)
                     .child(crate::i18n::tr(self.language, "设置")),
             );
-        for item in SettingsPage::ALL {
+        for item in SettingsPage::NAV_ORDER {
             let selected = item == page;
             nav = nav.child(
                 div()
@@ -1234,6 +1234,33 @@ impl MainView {
         }
     }
 
+    fn set_hash_setting_algorithms(
+        &mut self,
+        mut algorithms: Vec<HashAlgorithm>,
+        cx: &mut Context<Self>,
+    ) {
+        algorithms.sort_by_key(|candidate| {
+            HashAlgorithm::ALL
+                .iter()
+                .position(|item| item == candidate)
+                .unwrap_or(usize::MAX)
+        });
+        algorithms.dedup();
+        if algorithms.is_empty() {
+            return;
+        }
+        self.hash_batch_algorithms = algorithms.clone();
+        self.hash_batch_results.clear();
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
+        self.settings.hash.algorithms = algorithms
+            .iter()
+            .map(|item| item.name().to_string())
+            .collect();
+        self.save_settings();
+        cx.notify();
+    }
+
     fn toggle_hash_setting_algorithm(&mut self, algorithm: HashAlgorithm, cx: &mut Context<Self>) {
         let mut algorithms: Vec<HashAlgorithm> = self
             .settings
@@ -1249,28 +1276,9 @@ impl MainView {
             }
             algorithms.remove(position);
         } else {
-            if algorithms.len() >= 6 {
-                self.show_toast("最多同时选择 6 个哈希算法", ToastKind::Info, cx);
-                return;
-            }
             algorithms.push(algorithm);
         }
-        algorithms.sort_by_key(|candidate| {
-            HashAlgorithm::ALL
-                .iter()
-                .position(|item| item == candidate)
-                .unwrap_or(usize::MAX)
-        });
-        self.hash_batch_algorithms = algorithms.clone();
-        self.hash_batch_results.clear();
-        self.hash_selected_row = None;
-        self.hash_context_menu = None;
-        self.settings.hash.algorithms = algorithms
-            .iter()
-            .map(|item| item.name().to_string())
-            .collect();
-        self.save_settings();
-        cx.notify();
+        self.set_hash_setting_algorithms(algorithms, cx);
     }
 
     fn settings_hash(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -1284,6 +1292,11 @@ impl MainView {
             .collect();
         let auto_start = self.settings.hash.auto_start;
         let shell_menu = self.settings.integration.hash_menu;
+        let uppercase_display = self.settings.hash.uppercase_display;
+        let monospace = self.settings.hash.monospace;
+        let export_uppercase = self.settings.hash.export_uppercase;
+        let export_lf = self.settings.hash.export_lf;
+        let export_star = self.settings.hash.export_star;
 
         let mut algorithm_rows = Vec::new();
         for algorithm in HashAlgorithm::ALL {
@@ -1300,11 +1313,111 @@ impl MainView {
         }
         let algorithms_head = menu_group_head(
             &palette,
-            "默认算法",
-            "哈希窗口默认使用的算法，最多 6 个；在哈希窗口中调整后也会保存",
-            Vec::new(),
+            "算法",
+            "选中的算法将作为“文件哈希”窗口的列显示",
+            vec![
+                div()
+                    .text_size(crate::theme::font_px(12.0))
+                    .text_color(palette.muted)
+                    .child(format!(
+                        "已选 {} / {}",
+                        selected.len(),
+                        HashAlgorithm::ALL.len()
+                    ))
+                    .into_any_element(),
+                design::link_action(
+                    "hash-setting-all",
+                    "全选",
+                    &palette,
+                    cx.listener(|this, _, _, cx| {
+                        this.set_hash_setting_algorithms(HashAlgorithm::ALL.to_vec(), cx);
+                    }),
+                ),
+                design::link_action(
+                    "hash-setting-default",
+                    "默认",
+                    &palette,
+                    cx.listener(|this, _, _, cx| {
+                        this.set_hash_setting_algorithms(
+                            vec![
+                                HashAlgorithm::Sha256,
+                                HashAlgorithm::Sha1,
+                                HashAlgorithm::Md5,
+                                HashAlgorithm::Crc32,
+                            ],
+                            cx,
+                        );
+                    }),
+                ),
+            ],
         );
-        let algorithms_card = design::card(&palette).child(menu_grid(algorithm_rows, 2));
+        let algorithms_card = design::card(&palette).child(menu_grid(algorithm_rows, 4));
+
+        let display_rows = vec![
+            menu_check_row(
+                &palette,
+                "hash-setting-uppercase",
+                uppercase_display,
+                "哈希显示为大写字母",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.hash.uppercase_display = !this.settings.hash.uppercase_display;
+                    this.save_settings();
+                    cx.notify();
+                }),
+            ),
+            menu_check_row(
+                &palette,
+                "hash-setting-monospace",
+                monospace,
+                "使用等宽字体显示哈希",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.hash.monospace = !this.settings.hash.monospace;
+                    this.save_settings();
+                    cx.notify();
+                }),
+            ),
+        ];
+        let display_head = menu_group_head(&palette, "显示", "哈希窗口中的呈现方式", Vec::new());
+        let display_card = design::card(&palette).child(menu_grid(display_rows, 2));
+
+        let export_rows = vec![
+            menu_check_row(
+                &palette,
+                "hash-setting-export-uppercase",
+                export_uppercase,
+                "哈希导出为大写字母",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.hash.export_uppercase = !this.settings.hash.export_uppercase;
+                    this.save_settings();
+                    cx.notify();
+                }),
+            ),
+            menu_check_row(
+                &palette,
+                "hash-setting-export-lf",
+                export_lf,
+                "使用 Unix 换行符（LF）",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.hash.export_lf = !this.settings.hash.export_lf;
+                    this.save_settings();
+                    cx.notify();
+                }),
+            ),
+            menu_check_row(
+                &palette,
+                "hash-setting-export-star",
+                export_star,
+                "使用空格加星号（*）分隔",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.hash.export_star = !this.settings.hash.export_star;
+                    this.save_settings();
+                    cx.notify();
+                }),
+            ),
+        ];
+        let export_head =
+            menu_group_head(&palette, "校验和文件", "导出格式与文件内容行为", Vec::new());
+        let export_card = design::card(&palette).child(menu_grid(export_rows, 2));
 
         let behavior_rows = vec![
             menu_check_row(
@@ -1345,6 +1458,10 @@ impl MainView {
             .flex_col()
             .child(algorithms_head)
             .child(algorithms_card)
+            .child(display_head)
+            .child(display_card)
+            .child(export_head)
+            .child(export_card)
             .child(behavior_head)
             .child(behavior_card)
             .child(note)
@@ -2675,9 +2792,9 @@ fn settings_page_subtitle(page: SettingsPage, language: Language) -> &'static st
         }
         SettingsPage::Hash => {
             if english {
-                "Default algorithms, automatic calculation and Explorer integration"
+                "Algorithms, display and checksum export for file hashing"
             } else {
-                "设置默认算法、自动计算行为以及资源管理器中的哈希入口"
+                "配置“计算文件哈希”的默认算法、显示方式与校验和导出"
             }
         }
     }

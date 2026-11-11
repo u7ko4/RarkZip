@@ -71,7 +71,11 @@ fn hash_row_status(
     }
 }
 
-fn hash_export_contents(items: &[HashBatchItem], format: HashExportFormat) -> String {
+fn hash_export_contents(
+    items: &[HashBatchItem],
+    format: HashExportFormat,
+    hash_settings: &nimzip_engine::HashSettings,
+) -> String {
     let algorithm = match format {
         HashExportFormat::Sha256Sum => HashAlgorithm::Sha256,
         HashExportFormat::Md5Sum => HashAlgorithm::Md5,
@@ -94,22 +98,27 @@ fn hash_export_contents(items: &[HashBatchItem], format: HashExportFormat) -> St
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| item.path.display().to_string());
-        let hash = if format == HashExportFormat::Sfv {
+        let hash = if hash_settings.export_uppercase || format == HashExportFormat::Sfv {
             hash.to_ascii_uppercase()
         } else {
             hash.clone()
         };
-        if format == HashExportFormat::Sfv {
-            lines.push(format!("{name}  {hash}"));
+        let separator = if hash_settings.export_star {
+            " *"
         } else {
-            lines.push(format!("{hash}  {name}"));
+            "  "
+        };
+        if format == HashExportFormat::Sfv {
+            lines.push(format!("{name}{separator}{hash}"));
+        } else {
+            lines.push(format!("{hash}{separator}{name}"));
         }
     }
-    lines.join(
-        "
-
-",
-    )
+    lines.join(if hash_settings.export_lf {
+        "\n"
+    } else {
+        "\r\n"
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +147,7 @@ fn hash_display_rows(
     results: &[HashBatchItem],
     algorithms: &[HashAlgorithm],
     expected: &std::collections::HashMap<String, String>,
+    uppercase: bool,
 ) -> Vec<HashDisplayRow> {
     let mut rows = Vec::new();
     for path in paths {
@@ -161,7 +171,13 @@ fn hash_display_rows(
                         .iter()
                         .find(|(candidate, _)| candidate == algorithm)
                 })
-                .map(|(_, hash)| hash.clone());
+                .map(|(_, hash)| {
+                    if uppercase {
+                        hash.to_ascii_uppercase()
+                    } else {
+                        hash.clone()
+                    }
+                });
             let matched = hash
                 .as_deref()
                 .zip(expected_hash)
@@ -2050,6 +2066,8 @@ impl MainView {
         let expected_present = !expected.is_empty();
         let has_results = !self.hash_batch_results.is_empty();
         let (done, total) = self.hash_batch_progress;
+        let uppercase_display = self.settings.hash.uppercase_display;
+        let monospace = self.settings.hash.monospace;
 
         let mut matched = 0usize;
         let mut insecure = 0usize;
@@ -2408,6 +2426,7 @@ impl MainView {
                 &self.hash_batch_results,
                 &algorithms,
                 &expected,
+                uppercase_display,
             );
             let file_width = 240.0;
             let algorithm_width = 96.0;
@@ -2580,7 +2599,9 @@ impl MainView {
                             .px(px(8.0))
                             .text_size(crate::theme::caption())
                             .text_color(hash_color)
-                            .when(hash.is_some(), |this| this.font_family("Cascadia Mono"))
+                            .when(hash.is_some() && monospace, |this| {
+                                this.font_family("Cascadia Mono")
+                            })
                             .whitespace_nowrap()
                             .child(hash_display),
                     );
@@ -2665,7 +2686,8 @@ impl MainView {
             );
         }
 
-        let export_text = hash_export_contents(&self.hash_batch_results, export_format);
+        let export_text =
+            hash_export_contents(&self.hash_batch_results, export_format, &self.settings.hash);
         let export_value = export_text.clone();
         let export = Button::new("hash-export")
             .label("导出…")
@@ -2738,6 +2760,7 @@ impl MainView {
             &self.hash_batch_results,
             &self.hash_batch_algorithms,
             &self.hash_batch_expected,
+            self.settings.hash.uppercase_display,
         )
         .iter()
         .filter(|row| row.hash.is_some())

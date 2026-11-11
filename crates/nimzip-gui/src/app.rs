@@ -142,6 +142,20 @@ impl SettingsPage {
         SettingsPage::Hash,
     ];
 
+    /// 设置侧边栏的展示顺序；与持久化索引使用的 `ALL` 解耦，避免调整顺序后错页。
+    const NAV_ORDER: [SettingsPage; 10] = [
+        SettingsPage::General,
+        SettingsPage::Associations,
+        SettingsPage::ContextMenu,
+        SettingsPage::Extraction,
+        SettingsPage::Compression,
+        SettingsPage::Hash,
+        SettingsPage::View,
+        SettingsPage::Security,
+        SettingsPage::Advanced,
+        SettingsPage::Language,
+    ];
+
     fn label(self, language: Language) -> &'static str {
         tr(
             language,
@@ -414,7 +428,6 @@ fn hash_algorithms_from_settings(settings: &Settings) -> Vec<HashAlgorithm> {
             .unwrap_or(usize::MAX)
     });
     algorithms.dedup();
-    algorithms.truncate(6);
     if algorithms.is_empty() {
         vec![
             HashAlgorithm::Sha256,

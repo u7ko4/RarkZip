@@ -233,6 +233,16 @@ pub struct HashSettings {
     pub algorithms: Vec<String>,
     /// 打开文件哈希窗口后立即开始计算。
     pub auto_start: bool,
+    /// 哈希值以大写字母显示和复制。
+    pub uppercase_display: bool,
+    /// 使用等宽字体显示哈希值。
+    pub monospace: bool,
+    /// 导出校验和文件时哈希值使用大写。
+    pub export_uppercase: bool,
+    /// 导出时使用 Unix 换行符（LF）；关闭时使用 CRLF。
+    pub export_lf: bool,
+    /// 导出时使用空格加星号（` *`）分隔；关闭时使用双空格。
+    pub export_star: bool,
 }
 
 impl Default for HashSettings {
@@ -243,6 +253,11 @@ impl Default for HashSettings {
                 .map(ToString::to_string)
                 .collect(),
             auto_start: false,
+            uppercase_display: false,
+            monospace: true,
+            export_uppercase: false,
+            export_lf: true,
+            export_star: false,
         }
     }
 }
