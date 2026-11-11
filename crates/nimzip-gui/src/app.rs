@@ -388,6 +388,15 @@ impl HashExportFormat {
     }
 }
 
+#[derive(Debug, Clone)]
+struct HashContextMenu {
+    x: f32,
+    y: f32,
+    file: PathBuf,
+    algorithm: Option<HashAlgorithm>,
+    hash: Option<String>,
+}
+
 fn hash_expectations_from_text(text: &str) -> HashMap<String, String> {
     let entries = parse_checksum_text(text);
     if !entries.is_empty() {
@@ -490,6 +499,7 @@ pub struct MainView {
     row_sizes: Rc<Vec<Size<Pixels>>>,
     list_scroll: VirtualListScrollHandle,
     table_scroll: ScrollHandle,
+    hash_table_scroll: ScrollHandle,
     table_scroll_bounds: Option<Bounds<Pixels>>,
     h_scroll_drag: Option<f32>,
     tasks: Vec<TaskItem>,
@@ -544,6 +554,8 @@ pub struct MainView {
     hash_batch_expected: HashMap<String, String>,
     hash_verify_input: Entity<InputState>,
     hash_export_format: HashExportFormat,
+    hash_selected_row: Option<usize>,
+    hash_context_menu: Option<HashContextMenu>,
     hash_batch_run_id: u64,
     hash_batch_sender: Sender<HashBatchEvent>,
     hash_batch_receiver: Receiver<HashBatchEvent>,
@@ -738,6 +750,7 @@ impl MainView {
             row_sizes: Rc::new(Vec::new()),
             list_scroll: VirtualListScrollHandle::new(),
             table_scroll: ScrollHandle::new(),
+            hash_table_scroll: ScrollHandle::new(),
             table_scroll_bounds: None,
             h_scroll_drag: None,
             tasks: Vec::new(),
@@ -800,6 +813,8 @@ impl MainView {
             hash_batch_expected: HashMap::new(),
             hash_verify_input,
             hash_export_format: HashExportFormat::Sha256Sum,
+            hash_selected_row: None,
+            hash_context_menu: None,
             hash_batch_run_id: 0,
             hash_batch_sender,
             hash_batch_receiver,
@@ -2222,7 +2237,7 @@ impl Render for MainView {
             Page::NewArchive => self.render_new_archive_page(window, cx),
             Page::PasswordManager => self.render_password_manager_page(window, cx),
             Page::PasswordRecovery => self.render_password_recovery_page(cx),
-            Page::Hash => self.render_hash_page(cx),
+            Page::Hash => self.render_hash_page(window, cx),
         };
         // 任务中心、设置以及各功能页使用整页布局，不再显示归档地址栏与搜索框；
         // 首页（未打开归档）也不再显示地址栏，直接进入卡片式开始页。
@@ -2434,7 +2449,7 @@ impl MainView {
                 }
             }
             FeatureWindow::PasswordRecovery => self.render_password_recovery_page(cx),
-            FeatureWindow::Hash => self.render_hash_page(cx),
+            FeatureWindow::Hash => self.render_hash_page(window, cx),
         };
         // 独立窗口同样需要下拉层、模态框、Toast 与拖放处理，
         // 否则格式/算法下拉等控件会表现为“点了没反应”。
@@ -2442,6 +2457,10 @@ impl MainView {
             .dropdown
             .map(|kind| self.render_dropdown_overlay(kind, window, cx));
         let modal = self.modal.clone();
+        let hash_menu = (feature == FeatureWindow::Hash)
+            .then(|| self.hash_context_menu.clone())
+            .flatten()
+            .map(|menu| self.render_hash_context_menu(menu, window, cx));
         let toast = self.toast.as_ref().map(|toast| ToastSnapshot {
             message: toast.message.clone(),
             kind: toast.kind,
@@ -2478,6 +2497,7 @@ impl MainView {
             .when_some(modal, |this, modal| {
                 this.child(self.render_modal(modal, window, cx))
             })
+            .when_some(hash_menu, |this, menu| this.child(menu))
             .into_any_element()
     }
 

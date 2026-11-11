@@ -23,7 +23,10 @@ impl MainView {
         let control = event.keystroke.modifiers.control;
         if self.feature_window.is_some() {
             if key == "escape" {
-                if self.dropdown.is_some() {
+                if self.hash_context_menu.is_some() {
+                    self.hash_context_menu = None;
+                    cx.notify();
+                } else if self.dropdown.is_some() {
                     self.dropdown = None;
                     cx.notify();
                 } else if self.modal.is_some() {
@@ -820,6 +823,8 @@ impl MainView {
                 }
                 self.hash_batch_results.clear();
                 self.hash_batch_error = None;
+                self.hash_selected_row = None;
+                self.hash_context_menu = None;
                 self.show_toast(
                     format!("已添加 {} 个文件到哈希列表", paths.len()),
                     ToastKind::Info,
@@ -904,6 +909,8 @@ impl MainView {
             }
         }
         self.hash_batch_results.clear();
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
         cx.notify();
     }
 
@@ -925,6 +932,8 @@ impl MainView {
             }
         }
         self.hash_batch_results.clear();
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
         cx.notify();
     }
 
@@ -962,6 +971,9 @@ impl MainView {
         self.hash_batch_results.clear();
         self.hash_batch_error = None;
         self.hash_batch_progress = (0, 0);
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
+        self.hash_table_scroll.set_offset(point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -977,6 +989,8 @@ impl MainView {
         self.hash_batch_running = true;
         self.hash_batch_results.clear();
         self.hash_batch_error = None;
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
         self.hash_batch_progress = (0, total);
         let sender = self.hash_batch_sender.clone();
         std::thread::spawn(move || {
@@ -1577,6 +1591,8 @@ impl MainView {
         self.hash_batch_error = None;
         self.hash_batch_running = false;
         self.hash_batch_progress = (0, 0);
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
         self.page = Page::Hash;
         self.modal = None;
         cx.notify();

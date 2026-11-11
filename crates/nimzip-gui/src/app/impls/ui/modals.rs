@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::Disableable;
 use nimzip_engine::{ArchiveFormat, HashAlgorithm};
@@ -108,6 +109,89 @@ fn hash_export_contents(items: &[HashBatchItem], format: HashExportFormat) -> St
         "
 
 ",
+    )
+}
+
+#[derive(Debug, Clone)]
+struct HashDisplayRow {
+    path: PathBuf,
+    algorithm: Option<HashAlgorithm>,
+    hash: Option<String>,
+    error: Option<String>,
+    matched: bool,
+    insecure: bool,
+}
+
+fn hash_hex_len(algorithm: HashAlgorithm) -> usize {
+    match algorithm {
+        HashAlgorithm::Md5 => 32,
+        HashAlgorithm::Sha1 => 40,
+        HashAlgorithm::Sha256 | HashAlgorithm::Sha3 | HashAlgorithm::Blake3 => 64,
+        HashAlgorithm::Sha512 => 128,
+        HashAlgorithm::XxHash64 => 16,
+        HashAlgorithm::Crc32 => 8,
+    }
+}
+
+fn hash_display_rows(
+    paths: &[PathBuf],
+    results: &[HashBatchItem],
+    algorithms: &[HashAlgorithm],
+    expected: &std::collections::HashMap<String, String>,
+) -> Vec<HashDisplayRow> {
+    let mut rows = Vec::new();
+    for path in paths {
+        let result = results.iter().find(|item| &item.path == path);
+        if let Some(error) = result.and_then(|item| item.error.clone()) {
+            rows.push(HashDisplayRow {
+                path: path.clone(),
+                algorithm: None,
+                hash: None,
+                error: Some(error),
+                matched: false,
+                insecure: false,
+            });
+            continue;
+        }
+        let expected_hash = expected_hash_for(path, expected);
+        for algorithm in algorithms {
+            let hash = result
+                .and_then(|item| {
+                    item.hashes
+                        .iter()
+                        .find(|(candidate, _)| candidate == algorithm)
+                })
+                .map(|(_, hash)| hash.clone());
+            let matched = hash
+                .as_deref()
+                .zip(expected_hash)
+                .is_some_and(|(hash, want)| hash.eq_ignore_ascii_case(want));
+            rows.push(HashDisplayRow {
+                path: path.clone(),
+                algorithm: Some(*algorithm),
+                hash,
+                error: None,
+                matched,
+                insecure: matched && matches!(algorithm, HashAlgorithm::Md5 | HashAlgorithm::Sha1),
+            });
+        }
+    }
+    rows
+}
+
+fn hash_row_name(row: &HashDisplayRow) -> String {
+    row.path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| row.path.display().to_string())
+}
+
+fn hash_row_text(row: &HashDisplayRow) -> String {
+    format!(
+        "{}	{}	{}",
+        hash_row_name(row),
+        row.algorithm.map(HashAlgorithm::label).unwrap_or("—"),
+        row.hash.as_deref().unwrap_or("—"),
     )
 }
 
@@ -1953,7 +2037,11 @@ impl MainView {
         )
     }
 
-    pub(in crate::app) fn render_hash_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(in crate::app) fn render_hash_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let palette = self.palette;
         let running = self.hash_batch_running;
         let count = self.hash_batch_paths.len();
@@ -2229,6 +2317,8 @@ impl MainView {
                                 state.set_value("", window, cx);
                             });
                             this.hash_batch_results.clear();
+                            this.hash_selected_row = None;
+                            this.hash_context_menu = None;
                             this.show_toast(
                                 format!("已载入 {count} 条期望哈希"),
                                 ToastKind::Success,
@@ -2286,6 +2376,8 @@ impl MainView {
                             this.hash_batch_paths.clear();
                             this.hash_batch_results.clear();
                             this.hash_batch_progress = (0, 0);
+                            this.hash_selected_row = None;
+                            this.hash_context_menu = None;
                             cx.notify();
                         }
                     }),
@@ -2311,12 +2403,42 @@ impl MainView {
                 .child(add_folder())
                 .child(load_checksum());
 
-            let file_width = if algorithms.len() <= 4 { 220.0 } else { 170.0 };
-            let mut table = div().w_full().flex().flex_col();
-            let mut header = div()
+            let rows = hash_display_rows(
+                &self.hash_batch_paths,
+                &self.hash_batch_results,
+                &algorithms,
+                &expected,
+            );
+            let file_width = 240.0;
+            let algorithm_width = 96.0;
+            let char_width = crate::theme::caption().as_f32() * 0.66;
+            let min_hash_width = algorithms
+                .iter()
+                .map(|algorithm| hash_hex_len(*algorithm))
+                .max()
+                .unwrap_or(32) as f32
+                * char_width
+                + 32.0;
+            let page_width = (window
+                .viewport_size()
+                .width
+                .as_f32()
+                .min(design::PAGE_MAX_WIDTH)
+                - design::PAGE_PAD_X * 2.0
+                - 18.0)
+                .max(360.0);
+            let table_width = page_width.max(28.0 + file_width + algorithm_width + min_hash_width);
+            let hash_width = table_width - 28.0 - file_width - algorithm_width;
+            let row_height = 32.0;
+            let needs_h_scroll = table_width > page_width + 0.5;
+            let scrollbar_inset = if needs_h_scroll { 10.0 } else { 0.0 };
+            let table_height = 36.0 + rows.len() as f32 * row_height + scrollbar_inset;
+
+            let table_header = div()
                 .flex()
                 .items_center()
-                .h(px(38.0))
+                .h(px(36.0))
+                .w(px(table_width))
                 .px(px(14.0))
                 .bg(palette.panel)
                 .border_b_1()
@@ -2325,97 +2447,97 @@ impl MainView {
                     div()
                         .w(px(file_width))
                         .flex_shrink_0()
+                        .pl(px(23.0))
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("文件"),
-                );
-            for algorithm in &algorithms {
-                header = header.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .px(px(6.0))
-                        .truncate()
-                        .text_size(crate::theme::caption())
-                        .text_color(palette.muted)
-                        .child(algorithm.label()),
-                );
-            }
-            header = header
+                        .child("文件名"),
+                )
                 .child(
                     div()
-                        .w(px(72.0))
+                        .w(px(algorithm_width))
                         .flex_shrink_0()
+                        .px(px(8.0))
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("状态"),
+                        .child("算法"),
                 )
-                .child(div().w(px(40.0)).flex_shrink_0());
-            table = table.child(header);
+                .child(
+                    div()
+                        .w(px(hash_width))
+                        .flex_shrink_0()
+                        .px(px(8.0))
+                        .text_size(crate::theme::caption())
+                        .text_color(palette.muted)
+                        .child("哈希"),
+                );
 
-            for (index, path) in self.hash_batch_paths.clone().into_iter().enumerate() {
-                let result = self
-                    .hash_batch_results
-                    .iter()
-                    .find(|item| item.path == path)
-                    .cloned();
-                let status = result
-                    .as_ref()
-                    .map(|item| hash_row_status(item, &expected))
-                    .unwrap_or(HashRowStatus::Pending);
-                let (status_label, status_tone) = match status {
-                    HashRowStatus::Pending => ("待计算", design::TagTone::Neutral),
-                    HashRowStatus::Done => ("已计算", design::TagTone::Neutral),
-                    HashRowStatus::Match => ("匹配", design::TagTone::Ok),
-                    HashRowStatus::Insecure => ("不安全", design::TagTone::Manual),
-                    HashRowStatus::Mismatch => ("不匹配", design::TagTone::Danger),
-                    HashRowStatus::Unchecked => ("未校验", design::TagTone::Neutral),
-                    HashRowStatus::Error => ("错误", design::TagTone::Danger),
-                };
-                let error = result.as_ref().and_then(|item| item.error.clone());
-                let hashes = result
-                    .as_ref()
-                    .map(|item| item.hashes.clone())
-                    .unwrap_or_default();
-                let file_name = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.display().to_string());
-                let secondary = error.clone().unwrap_or_else(|| path.display().to_string());
-                let secondary_color = if error.is_some() {
+            let mut table = div()
+                .w(px(table_width))
+                .flex()
+                .flex_col()
+                .child(table_header);
+
+            for (row_index, row) in rows.iter().enumerate() {
+                let selected = self.hash_selected_row == Some(row_index);
+                let hash = row.hash.clone();
+                let hash_display = hash.clone().unwrap_or_else(|| {
+                    if let Some(error) = &row.error {
+                        format!("错误：{error}")
+                    } else {
+                        "—".to_string()
+                    }
+                });
+                let hash_color = if row.error.is_some() {
                     palette.bad
+                } else if row.matched {
+                    if row.insecure {
+                        palette.warn
+                    } else {
+                        palette.ok
+                    }
+                } else if hash.is_some() {
+                    palette.sub
                 } else {
                     palette.muted
                 };
-                let expected_for_file = expected_hash_for(&path, &expected);
-                let remove_path = path.clone();
-                let remove = (!running).then(|| {
-                    design::icon_action(
-                        &palette,
-                        format!("hashbatch-remove-{index}"),
-                        IconName::X,
-                        palette.muted,
-                        false,
-                        "移除文件",
-                        cx.listener(move |this, _, _, cx| {
-                            this.hash_batch_paths.retain(|path| path != &remove_path);
-                            this.hash_batch_results
-                                .retain(|item| item.path != remove_path);
+                let menu_file = row.path.clone();
+                let menu_algorithm = row.algorithm;
+                let menu_hash = hash.clone();
+                let row_id = format!("hashbatch-row-{row_index}");
+
+                let table_row = div()
+                    .id(row_id)
+                    .flex()
+                    .items_center()
+                    .h(px(row_height))
+                    .w(px(table_width))
+                    .px(px(14.0))
+                    .when(row_index + 1 < rows.len(), |this| {
+                        this.border_b_1().border_color(palette.line)
+                    })
+                    .when(selected, |this| this.bg(palette.accent_soft))
+                    .when(!selected, |this| {
+                        this.hover(|style| style.bg(palette.accent_softer))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.hash_selected_row = Some(row_index);
+                        this.hash_context_menu = None;
+                        cx.notify();
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.hash_selected_row = Some(row_index);
+                            this.hash_context_menu = Some(HashContextMenu {
+                                x: event.position.x.as_f32(),
+                                y: event.position.y.as_f32(),
+                                file: menu_file.clone(),
+                                algorithm: menu_algorithm,
+                                hash: menu_hash.clone(),
+                            });
                             cx.notify();
                         }),
                     )
-                });
-
-                let mut row = div()
-                    .id(format!("hashbatch-row-{index}"))
-                    .flex()
-                    .items_center()
-                    .h(px(48.0))
-                    .px(px(14.0))
-                    .when(index + 1 < count, |this| {
-                        this.border_b_1().border_color(palette.line)
-                    })
-                    .hover(|style| style.bg(palette.accent_softer))
                     .child(
                         div()
                             .w(px(file_width))
@@ -2427,98 +2549,79 @@ impl MainView {
                             .child(icon(IconName::FileText, palette.muted, 15.0))
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_col()
+                                    .flex_1()
                                     .min_w_0()
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_size(crate::theme::caption())
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(palette.text)
-                                            .child(file_name),
-                                    )
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_size(crate::theme::caption())
-                                            .text_color(secondary_color)
-                                            .child(secondary),
-                                    ),
+                                    .truncate()
+                                    .text_size(crate::theme::caption())
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(palette.text)
+                                    .child(hash_row_name(row)),
                             ),
-                    );
-                for algorithm in &algorithms {
-                    let hash = hashes
-                        .iter()
-                        .find(|(candidate, _)| candidate == algorithm)
-                        .map(|(_, hash)| hash.clone());
-                    let copy_value = hash.clone();
-                    let label = algorithm.label();
-                    let cell_color =
-                        hash.as_ref()
-                            .map_or(palette.muted, |value| match expected_for_file {
-                                Some(want) if value.eq_ignore_ascii_case(want) => {
-                                    if matches!(algorithm, HashAlgorithm::Md5 | HashAlgorithm::Sha1)
-                                    {
-                                        palette.warn
-                                    } else {
-                                        palette.ok
-                                    }
-                                }
-                                _ => palette.sub,
-                            });
-                    let cell = div()
-                        .id(format!("hash-cell-{index}-{}", algorithm.name()))
-                        .role(Role::Button)
-                        .aria_label(format!("复制 {label} 哈希"))
-                        .flex_1()
-                        .min_w_0()
-                        .px(px(6.0))
-                        .text_size(crate::theme::caption())
-                        .text_color(cell_color)
-                        .when_some(copy_value, |this, value| {
-                            this.cursor_pointer()
-                                .hover(|style| style.text_color(palette.accent))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-                                    this.show_toast(format!("已复制 {label}"), ToastKind::Info, cx);
-                                }))
-                        })
-                        .child(
-                            div()
-                                .truncate()
-                                .font_family("Cascadia Mono")
-                                .child(hash.unwrap_or_else(|| "—".to_string())),
-                        );
-                    row = row.child(cell);
-                }
-                row = row
-                    .child(
-                        div()
-                            .w(px(72.0))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .child(design::tag(&palette, status_label, status_tone)),
                     )
                     .child(
                         div()
-                            .w(px(40.0))
+                            .w(px(algorithm_width))
                             .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .when_some(remove, |this, remove| this.child(remove)),
+                            .px(px(8.0))
+                            .truncate()
+                            .text_size(crate::theme::caption())
+                            .text_color(palette.sub)
+                            .child(
+                                row.algorithm
+                                    .map(HashAlgorithm::label)
+                                    .unwrap_or("—")
+                                    .to_string(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(px(hash_width))
+                            .flex_shrink_0()
+                            .px(px(8.0))
+                            .text_size(crate::theme::caption())
+                            .text_color(hash_color)
+                            .when(hash.is_some(), |this| this.font_family("Cascadia Mono"))
+                            .whitespace_nowrap()
+                            .child(hash_display),
                     );
-                table = table.child(row);
+                table = table.child(table_row);
             }
+
+            let table = table.pb(px(scrollbar_inset));
+            let table_scroll = div()
+                .id("hash-table-scroll")
+                .w_full()
+                .h(px(table_height))
+                .flex_none()
+                .overflow_x_scroll()
+                .track_scroll(&self.hash_table_scroll)
+                .child(table)
+                .when(needs_h_scroll, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .left(px(14.0))
+                            .right(px(14.0))
+                            .bottom_0()
+                            .h(px(10.0))
+                            .child(
+                                Scrollbar::horizontal(&self.hash_table_scroll)
+                                    .id("hash-table-scrollbar")
+                                    .mode(ScrollbarMode::Always),
+                            ),
+                    )
+                });
 
             body.push(toolbar.into_any_element());
             body.push(
                 design::card(&palette)
                     .w_full()
+                    .h(px(table_height))
+                    .flex_none()
+                    .flex()
+                    .flex_col()
                     .overflow_hidden()
-                    .child(table)
+                    .child(table_scroll)
                     .into_any_element(),
             );
         }
@@ -2627,6 +2730,200 @@ impl MainView {
             .child(export)
             .into_any_element();
         design::page_shell_bare(&palette, body, Some(footer))
+    }
+
+    fn hash_rows_text(&self) -> String {
+        hash_display_rows(
+            &self.hash_batch_paths,
+            &self.hash_batch_results,
+            &self.hash_batch_algorithms,
+            &self.hash_batch_expected,
+        )
+        .iter()
+        .filter(|row| row.hash.is_some())
+        .map(hash_row_text)
+        .collect::<Vec<_>>()
+        .join("\n")
+    }
+
+    fn hash_menu_item<F>(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        enabled: bool,
+        action: F,
+        cx: &mut Context<Self>,
+    ) -> AnyElement
+    where
+        F: Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    {
+        let palette = self.palette;
+        div()
+            .id(id)
+            .role(Role::Button)
+            .aria_label(label)
+            .h(px(30.0))
+            .px(px(9.0))
+            .rounded(px(crate::theme::RADIUS_CONTROL))
+            .flex()
+            .items_center()
+            .text_size(crate::theme::body())
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .text_color(palette.text)
+                    .hover(|style| style.bg(palette.accent_soft).text_color(palette.accent))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.hash_context_menu = None;
+                        action(this, window, cx);
+                        cx.notify();
+                    }))
+            })
+            .when(!enabled, |this| this.text_color(palette.muted).opacity(0.6))
+            .child(div().flex_1().min_w_0().truncate().child(label))
+            .into_any_element()
+    }
+
+    pub(in crate::app) fn render_hash_context_menu(
+        &mut self,
+        menu: HashContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let palette = self.palette;
+        let viewport = window.viewport_size();
+        let width = 188.0;
+        let estimated_height = 4.0 * 30.0 + 12.0;
+        let left = menu
+            .x
+            .clamp(8.0, (viewport.width.as_f32() - width - 8.0).max(8.0));
+        let top = menu.y.clamp(
+            8.0,
+            (viewport.height.as_f32() - estimated_height - 8.0).max(8.0),
+        );
+
+        let hash = menu.hash.clone();
+        let row_text = hash_row_text(&HashDisplayRow {
+            path: menu.file.clone(),
+            algorithm: menu.algorithm,
+            hash: menu.hash.clone(),
+            error: None,
+            matched: false,
+            insecure: false,
+        });
+        let file_name = menu
+            .file
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| menu.file.display().to_string());
+        let all_text = self.hash_rows_text();
+
+        let copy_hash_value = hash.clone();
+        let copy_hash = self.hash_menu_item(
+            "hash-ctx-copy-hash",
+            "复制哈希值",
+            hash.is_some(),
+            move |this, _, cx| {
+                let Some(value) = copy_hash_value.clone() else {
+                    return;
+                };
+                cx.write_to_clipboard(ClipboardItem::new_string(value));
+                this.show_toast("已复制哈希值", ToastKind::Info, cx);
+            },
+            cx,
+        );
+        let copy_row_value = row_text;
+        let copy_row = self.hash_menu_item(
+            "hash-ctx-copy-row",
+            "复制整行",
+            hash.is_some(),
+            move |this, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copy_row_value.clone()));
+                this.show_toast("已复制整行", ToastKind::Info, cx);
+            },
+            cx,
+        );
+        let copy_name = self.hash_menu_item(
+            "hash-ctx-copy-name",
+            "复制文件名",
+            true,
+            move |this, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(file_name.clone()));
+                this.show_toast("已复制文件名", ToastKind::Info, cx);
+            },
+            cx,
+        );
+        let all_enabled = !all_text.is_empty();
+        let copy_all = self.hash_menu_item(
+            "hash-ctx-copy-all",
+            "复制全部",
+            all_enabled,
+            move |this, _, cx| {
+                if all_text.is_empty() {
+                    return;
+                }
+                cx.write_to_clipboard(ClipboardItem::new_string(all_text.clone()));
+                this.show_toast("已复制全部哈希", ToastKind::Info, cx);
+            },
+            cx,
+        );
+
+        div()
+            .id("hash-context-layer")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                div()
+                    .id("hash-context-backdrop")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .bg(Hsla::transparent_black())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.hash_context_menu = None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, _, _, cx| {
+                            this.hash_context_menu = None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("hash-context-menu")
+                    .absolute()
+                    .left(px(left))
+                    .top(px(top))
+                    .w(px(width))
+                    .p(px(5.0))
+                    .rounded(px(crate::theme::RADIUS_OVERLAY))
+                    .bg(palette.bg)
+                    .border_1()
+                    .border_color(palette.line_strong)
+                    .shadow_lg()
+                    .occlude()
+                    .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(copy_hash)
+                            .child(copy_row)
+                            .child(copy_name)
+                            .child(copy_all),
+                    ),
+            )
+            .into_any_element()
     }
 
     pub(in crate::app) fn render_new_archive_page(
