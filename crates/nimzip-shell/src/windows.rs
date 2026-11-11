@@ -15,6 +15,7 @@ use crate::common::{
     enabled_compress_verbs, enabled_empty_verbs, enabled_extract_verbs, extension_key, icon_value,
     non_archive_applies_to, normalize_extension, prog_id, VerbSpec, CLASSES_PATH,
     DIRECTORY_BACKGROUND_SHELL_PATH, DIRECTORY_SHELL_PATH, FILE_SHELL_PATH, NIMZIP_PREFIX,
+    VERB_HASH, VERB_HASH_ARCHIVE,
 };
 use crate::{AssociationStatus, ShellOptions, ShellScope};
 
@@ -61,11 +62,16 @@ fn install_in(classes: &RegKey, options: &ShellOptions, com_menu: bool) -> Resul
 
     if !com_menu {
         // DLL 不存在时退回静态菜单，保证基本可用；动态排序/名称由静态动词提供。
-        let extract = enabled_extract_verbs(options);
-        let compress = enabled_compress_verbs(options);
+        let mut extract = enabled_extract_verbs(options);
+        let mut file_compress = enabled_compress_verbs(options);
+        if options.hash_menu {
+            extract.push(&VERB_HASH_ARCHIVE);
+            file_compress.push(&VERB_HASH);
+        }
+        let directory_compress = enabled_compress_verbs(options);
         install_verbs(
             &file_shell,
-            &compress,
+            &file_compress,
             &options.exe,
             icon.as_deref(),
             options.cascade,
@@ -87,7 +93,7 @@ fn install_in(classes: &RegKey, options: &ShellOptions, com_menu: bool) -> Resul
         }
         install_verbs(
             &directory_shell,
-            &compress,
+            &directory_compress,
             &options.exe,
             icon.as_deref(),
             options.cascade,

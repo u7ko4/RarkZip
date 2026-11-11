@@ -974,6 +974,12 @@ impl MainView {
         self.hash_selected_row = None;
         self.hash_context_menu = None;
         self.hash_table_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.settings.hash.algorithms = self
+            .hash_batch_algorithms
+            .iter()
+            .map(|algorithm| algorithm.name().to_string())
+            .collect();
+        self.save_settings();
         cx.notify();
     }
 

@@ -878,6 +878,7 @@ fn shell_command(args: ShellArgs) -> Result<()> {
                 scope: ShellScope::CurrentUser,
                 archive_extensions: settings.integration.associations.clone(),
                 extract_verbs: settings.integration.extract_verbs.clone(),
+                hash_menu: settings.integration.hash_menu,
                 compress_verbs: settings.integration.compress_verbs.clone(),
                 empty_verbs: settings.integration.empty_verbs.clone(),
                 double_click: settings.integration.double_click.clone(),

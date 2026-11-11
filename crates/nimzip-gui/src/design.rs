@@ -381,7 +381,7 @@ pub fn info_note(palette: &Palette, text: impl Into<SharedString>) -> AnyElement
         .text_size(crate::theme::font_px(12.5))
         .text_color(palette.muted)
         .child(icon(IconName::Info, palette.muted, 14.0))
-        .child(text.into())
+        .child(div().flex_1().min_w_0().child(text.into()))
         .into_any_element()
 }
 

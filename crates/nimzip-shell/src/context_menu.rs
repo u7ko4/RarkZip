@@ -50,7 +50,7 @@ mod imp {
         CONTEXT_MENU_CLSID.to_string()
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(super) enum MenuAction {
         Open,
         Preview,
@@ -313,9 +313,6 @@ mod imp {
         if enabled("preview", keys) {
             add_action(labels, actions, "压缩文件预览...", MenuAction::Preview);
         }
-        if enabled("hash", keys) {
-            add_action(labels, actions, "计算 SHA-256 哈希", MenuAction::Hash);
-        }
     }
 
     fn push_compress_actions(
@@ -451,6 +448,19 @@ mod imp {
         } else {
             push_compress_actions(paths, settings, &mut labels, &mut actions);
         }
+        // 哈希对普通文件和压缩包都可用；文件夹不参与。
+        if settings.integration.hash_menu && paths.iter().all(|path| path.is_file()) {
+            add_action(
+                &mut labels,
+                &mut actions,
+                if paths.len() == 1 {
+                    "计算文件哈希…"
+                } else {
+                    "计算所选文件的哈希…"
+                },
+                MenuAction::Hash,
+            );
+        }
         (labels, actions)
     }
 
@@ -523,10 +533,14 @@ mod imp {
                 }
             }
             MenuAction::Hash => {
+                let Some(exe) = exe_path() else {
+                    return;
+                };
+                let mut command = Command::new(exe);
                 for path in paths {
-                    let path = path.to_string_lossy().to_string();
-                    spawn(&["--cli", "h", &path, "-a", "sha256"]);
+                    command.arg("--hash").arg(path);
                 }
+                let _ = command.spawn();
             }
             MenuAction::NewArchive => {
                 let Some(exe) = exe_path() else {
@@ -834,7 +848,7 @@ pub use imp::{
 
 #[cfg(all(windows, test))]
 mod tests {
-    use super::imp::{build_actions, is_archive};
+    use super::imp::{build_actions, is_archive, MenuAction};
     use nimzip_engine::Settings;
     use std::path::PathBuf;
 
@@ -853,11 +867,11 @@ mod tests {
             "admin",
             "test",
             "preview",
-            "hash",
         ]
         .into_iter()
         .map(ToString::to_string)
         .collect();
+        settings.integration.hash_menu = true;
         settings.integration.compress_verbs = [
             "zip",
             "sevenz",
@@ -901,7 +915,7 @@ mod tests {
                 "测试压缩文件",
                 "用 NimZip 打开",
                 "压缩文件预览...",
-                "计算 SHA-256 哈希",
+                "计算文件哈希…",
             ]
         );
     }
@@ -923,6 +937,7 @@ mod tests {
         assert!(labels.iter().any(|label| label.contains("独立的")));
         assert!(labels.iter().any(|label| label.contains("压缩为“")));
         assert!(!labels.iter().any(|label| label.contains("(2)")));
+        assert!(labels.iter().any(|label| label == "计算所选文件的哈希…"));
     }
 
     #[test]
@@ -962,5 +977,34 @@ mod tests {
         assert!(labels[0].contains("压缩为“"), "{labels:?}");
         assert!(labels.iter().any(|label| label.contains("独立的")));
         assert!(!labels.iter().any(|label| label.contains("解压到")));
+        assert!(labels.iter().any(|label| label == "计算所选文件的哈希…"));
+    }
+
+    #[test]
+    fn hash_action_handles_single_and_multiple_files() {
+        let dir = temp_dir("hash-files");
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        let _ = std::fs::write(&a, b"a");
+        let _ = std::fs::write(&b, b"b");
+        let (single, actions) = build_actions(std::slice::from_ref(&a), &settings());
+        assert_eq!(single.last().unwrap(), "计算文件哈希…");
+        assert_eq!(actions.last().unwrap(), &MenuAction::Hash);
+        let (multi, actions) = build_actions(&[a, b], &settings());
+        assert_eq!(multi.last().unwrap(), "计算所选文件的哈希…");
+        assert_eq!(actions.last().unwrap(), &MenuAction::Hash);
+    }
+
+    #[test]
+    fn hash_action_is_hidden_for_directories_and_when_disabled() {
+        let dir = temp_dir("hash-dirs");
+        let mut settings = settings();
+        let (labels, _) = build_actions(std::slice::from_ref(&dir), &settings);
+        assert!(!labels.iter().any(|label| label.contains("哈希")));
+        settings.integration.hash_menu = false;
+        let file = dir.join("a.txt");
+        let _ = std::fs::write(&file, b"a");
+        let (labels, _) = build_actions(&[file], &settings);
+        assert!(!labels.iter().any(|label| label.contains("哈希")));
     }
 }

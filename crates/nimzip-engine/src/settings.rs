@@ -225,6 +225,28 @@ impl Default for AdvancedSettings {
     }
 }
 
+/// 文件哈希窗口与资源管理器哈希入口的默认行为。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HashSettings {
+    /// 默认算法 key（sha256 / sha1 / md5 / sha512 / sha3-256 / blake3 / xxhash64 / crc32）。
+    pub algorithms: Vec<String>,
+    /// 打开文件哈希窗口后立即开始计算。
+    pub auto_start: bool,
+}
+
+impl Default for HashSettings {
+    fn default() -> Self {
+        Self {
+            algorithms: ["sha256", "sha1", "md5", "crc32"]
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+            auto_start: false,
+        }
+    }
+}
+
 /// Windows 资源管理器集成：文件关联与右键菜单。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -237,6 +259,8 @@ pub struct IntegrationSettings {
     pub double_click_folder: String,
     /// 文件右键菜单中启用的解压/打开动作 key。
     pub extract_verbs: Vec<String>,
+    /// 在文件右键菜单中显示“计算文件哈希”，支持单文件和多文件选择。
+    pub hash_menu: bool,
     /// 文件/文件夹右键菜单中启用的压缩动作 key。
     pub compress_verbs: Vec<String>,
     /// 是否已把“压缩为独立的 ZIP/7Z”加入旧版压缩动作列表。
@@ -281,6 +305,7 @@ impl Default for IntegrationSettings {
             .into_iter()
             .map(ToString::to_string)
             .collect(),
+            hash_menu: true,
             compress_verbs: ["zip", "sevenz", "each_zip", "gui"]
                 .into_iter()
                 .map(ToString::to_string)
@@ -356,6 +381,7 @@ pub struct Settings {
     pub security: SecuritySettings,
     pub advanced: AdvancedSettings,
     pub integration: IntegrationSettings,
+    pub hash: HashSettings,
     pub ui: UiSettings,
 }
 
@@ -439,6 +465,16 @@ impl Settings {
             self.ui.window_sizes.remove("quick_extract_progress");
             self.ui.window_sizes.remove("quick_compress");
             self.ui.quick_sizes_defaulted = true;
+        }
+        // 旧版把哈希动作混在解压菜单里；新版本有独立的哈希设置与菜单开关。
+        if self
+            .integration
+            .extract_verbs
+            .iter()
+            .any(|key| key == "hash")
+        {
+            self.integration.hash_menu = true;
+            self.integration.extract_verbs.retain(|key| key != "hash");
         }
         if !self.integration.menu_aligned {
             // 把旧版默认集合一次性收敛为常用动作；用户自定义过的
@@ -636,6 +672,33 @@ mod tests {
             .compress_verbs
             .iter()
             .any(|key| key == "admin"));
+    }
+
+    #[test]
+    fn moves_legacy_hash_verb_to_dedicated_menu_setting() {
+        let mut settings = Settings::default();
+        settings.integration.hash_menu = false;
+        settings.integration.extract_verbs.push("hash".to_string());
+        settings.migrate();
+        assert!(settings.integration.hash_menu);
+        assert!(!settings
+            .integration
+            .extract_verbs
+            .iter()
+            .any(|key| key == "hash"));
+    }
+
+    #[test]
+    fn hash_settings_default_to_common_algorithms() {
+        let settings = HashSettings::default();
+        assert_eq!(
+            settings.algorithms,
+            vec!["sha256", "sha1", "md5", "crc32"]
+                .into_iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert!(!settings.auto_start);
     }
 
     #[test]

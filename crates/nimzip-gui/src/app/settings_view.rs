@@ -1,5 +1,5 @@
 use gpui_kit::component::input::Input;
-use nimzip_engine::{ArchiveFormat, Codepage, Settings};
+use nimzip_engine::{ArchiveFormat, Codepage, HashAlgorithm, Settings};
 
 use crate::app::impls::ui::level_label;
 use crate::app::*;
@@ -99,6 +99,7 @@ impl MainView {
             SettingsPage::Security => self.settings_security(cx),
             SettingsPage::Advanced => self.settings_advanced(cx),
             SettingsPage::Language => self.settings_language(cx),
+            SettingsPage::Hash => self.settings_hash(cx),
         };
 
         let done = design::done_button(
@@ -1174,6 +1175,7 @@ impl MainView {
             scope: nimzip_shell::ShellScope::CurrentUser,
             archive_extensions: self.settings.integration.associations.clone(),
             extract_verbs: self.settings.integration.extract_verbs.clone(),
+            hash_menu: self.settings.integration.hash_menu,
             compress_verbs: self.settings.integration.compress_verbs.clone(),
             empty_verbs: self.settings.integration.empty_verbs.clone(),
             double_click: self.settings.integration.double_click.clone(),
@@ -1230,6 +1232,123 @@ impl MainView {
                 cx,
             );
         }
+    }
+
+    fn toggle_hash_setting_algorithm(&mut self, algorithm: HashAlgorithm, cx: &mut Context<Self>) {
+        let mut algorithms: Vec<HashAlgorithm> = self
+            .settings
+            .hash
+            .algorithms
+            .iter()
+            .filter_map(|name| HashAlgorithm::from_name(name))
+            .collect();
+        if let Some(position) = algorithms.iter().position(|item| *item == algorithm) {
+            if algorithms.len() <= 1 {
+                self.show_toast("至少保留一个哈希算法", ToastKind::Info, cx);
+                return;
+            }
+            algorithms.remove(position);
+        } else {
+            if algorithms.len() >= 6 {
+                self.show_toast("最多同时选择 6 个哈希算法", ToastKind::Info, cx);
+                return;
+            }
+            algorithms.push(algorithm);
+        }
+        algorithms.sort_by_key(|candidate| {
+            HashAlgorithm::ALL
+                .iter()
+                .position(|item| item == candidate)
+                .unwrap_or(usize::MAX)
+        });
+        self.hash_batch_algorithms = algorithms.clone();
+        self.hash_batch_results.clear();
+        self.hash_selected_row = None;
+        self.hash_context_menu = None;
+        self.settings.hash.algorithms = algorithms
+            .iter()
+            .map(|item| item.name().to_string())
+            .collect();
+        self.save_settings();
+        cx.notify();
+    }
+
+    fn settings_hash(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let palette = self.palette;
+        let selected: Vec<HashAlgorithm> = self
+            .settings
+            .hash
+            .algorithms
+            .iter()
+            .filter_map(|name| HashAlgorithm::from_name(name))
+            .collect();
+        let auto_start = self.settings.hash.auto_start;
+        let shell_menu = self.settings.integration.hash_menu;
+
+        let mut algorithm_rows = Vec::new();
+        for algorithm in HashAlgorithm::ALL {
+            let checked = selected.contains(&algorithm);
+            algorithm_rows.push(menu_check_row(
+                &palette,
+                format!("hash-setting-{}", algorithm.name()),
+                checked,
+                algorithm.label(),
+                cx.listener(move |this, _, _, cx| {
+                    this.toggle_hash_setting_algorithm(algorithm, cx);
+                }),
+            ));
+        }
+        let algorithms_head = menu_group_head(
+            &palette,
+            "默认算法",
+            "哈希窗口默认使用的算法，最多 6 个；在哈希窗口中调整后也会保存",
+            Vec::new(),
+        );
+        let algorithms_card = design::card(&palette).child(menu_grid(algorithm_rows, 2));
+
+        let behavior_rows = vec![
+            menu_check_row(
+                &palette,
+                "hash-setting-auto-start",
+                auto_start,
+                "打开文件哈希窗口后自动开始计算",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.hash.auto_start = !this.settings.hash.auto_start;
+                    this.save_settings();
+                    cx.notify();
+                }),
+            ),
+            menu_check_row(
+                &palette,
+                "hash-setting-shell-menu",
+                shell_menu,
+                "在资源管理器中显示“计算文件哈希”",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.integration.hash_menu = !this.settings.integration.hash_menu;
+                    this.save_settings();
+                    this.apply_shell_menu(cx);
+                    cx.notify();
+                }),
+            ),
+        ];
+        let behavior_head =
+            menu_group_head(&palette, "行为", "自动计算与资源管理器集成", Vec::new());
+        let behavior_card = design::card(&palette).child(menu_grid(behavior_rows, 2));
+
+        let note = design::info_note(
+            &palette,
+            "资源管理器菜单对单个或多个文件均有效；选择多个文件时会打开一个哈希窗口并载入全部文件。文件夹不会显示该菜单。",
+        );
+
+        div()
+            .flex()
+            .flex_col()
+            .child(algorithms_head)
+            .child(algorithms_card)
+            .child(behavior_head)
+            .child(behavior_card)
+            .child(note)
+            .into_any_element()
     }
 
     fn settings_context_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -2190,7 +2309,6 @@ const EXTRACT_MENU_OPTIONS: &[(&str, &str)] = &[
     ("test", "测试压缩文件"),
     ("open", "用 NimZip 打开"),
     ("preview", "压缩文件预览..."),
-    ("hash", "计算 SHA-256 哈希"),
 ];
 
 // 菜单顺序：ZIP → 删除 → TAR/TGZ → 7Z → GZ/XZ/ZST →
@@ -2485,6 +2603,7 @@ fn settings_page_icon(page: SettingsPage) -> IconName {
         SettingsPage::Security => IconName::ShieldCheck,
         SettingsPage::Advanced => IconName::SlidersHorizontal,
         SettingsPage::Language => IconName::Globe,
+        SettingsPage::Hash => IconName::Hash,
     }
 }
 
@@ -2552,6 +2671,13 @@ fn settings_page_subtitle(page: SettingsPage, language: Language) -> &'static st
                 "Interface language and language packs"
             } else {
                 "界面语言与语言包"
+            }
+        }
+        SettingsPage::Hash => {
+            if english {
+                "Default algorithms, automatic calculation and Explorer integration"
+            } else {
+                "设置默认算法、自动计算行为以及资源管理器中的哈希入口"
             }
         }
     }

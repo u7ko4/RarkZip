@@ -125,10 +125,11 @@ enum SettingsPage {
     Security,
     Advanced,
     Language,
+    Hash,
 }
 
 impl SettingsPage {
-    const ALL: [SettingsPage; 9] = [
+    const ALL: [SettingsPage; 10] = [
         SettingsPage::General,
         SettingsPage::Associations,
         SettingsPage::ContextMenu,
@@ -138,6 +139,7 @@ impl SettingsPage {
         SettingsPage::Security,
         SettingsPage::Advanced,
         SettingsPage::Language,
+        SettingsPage::Hash,
     ];
 
     fn label(self, language: Language) -> &'static str {
@@ -153,6 +155,7 @@ impl SettingsPage {
                 Self::Security => "安全",
                 Self::Advanced => "高级",
                 Self::Language => "语言",
+                Self::Hash => "哈希",
             },
         )
     }
@@ -397,6 +400,33 @@ struct HashContextMenu {
     hash: Option<String>,
 }
 
+fn hash_algorithms_from_settings(settings: &Settings) -> Vec<HashAlgorithm> {
+    let mut algorithms: Vec<HashAlgorithm> = settings
+        .hash
+        .algorithms
+        .iter()
+        .filter_map(|name| HashAlgorithm::from_name(name))
+        .collect();
+    algorithms.sort_by_key(|algorithm| {
+        HashAlgorithm::ALL
+            .iter()
+            .position(|candidate| candidate == algorithm)
+            .unwrap_or(usize::MAX)
+    });
+    algorithms.dedup();
+    algorithms.truncate(6);
+    if algorithms.is_empty() {
+        vec![
+            HashAlgorithm::Sha256,
+            HashAlgorithm::Sha1,
+            HashAlgorithm::Md5,
+            HashAlgorithm::Crc32,
+        ]
+    } else {
+        algorithms
+    }
+}
+
 fn hash_expectations_from_text(text: &str) -> HashMap<String, String> {
     let entries = parse_checksum_text(text);
     if !entries.is_empty() {
@@ -624,6 +654,9 @@ impl MainView {
                         view.hash_batch_paths.push(path);
                     }
                 }
+                if view.settings.hash.auto_start && !view.hash_batch_paths.is_empty() {
+                    view.start_hash_batch(cx);
+                }
             }
         }
         view
@@ -704,6 +737,7 @@ impl MainView {
             InputState::new(window, cx)
                 .placeholder("粘贴期望的哈希值或校验和文件内容，自动匹配下方结果")
         });
+        let hash_algorithms = hash_algorithms_from_settings(&settings);
 
         let (task_sender, task_receiver) = unbounded();
         let (recovery_sender, recovery_receiver) = unbounded();
@@ -800,12 +834,7 @@ impl MainView {
             rename_input,
             comment_input,
             hash_batch_paths: Vec::new(),
-            hash_batch_algorithms: vec![
-                HashAlgorithm::Sha256,
-                HashAlgorithm::Sha1,
-                HashAlgorithm::Md5,
-                HashAlgorithm::Crc32,
-            ],
+            hash_batch_algorithms: hash_algorithms,
             hash_batch_results: Vec::new(),
             hash_batch_running: false,
             hash_batch_progress: (0, 0),

@@ -53,6 +53,8 @@ pub struct ShellOptions {
     pub archive_extensions: Vec<String>,
     /// 文件右键菜单中启用的解压/打开动作 key。
     pub extract_verbs: Vec<String>,
+    /// 在文件右键菜单中显示“计算文件哈希”。
+    pub hash_menu: bool,
     /// 文件/文件夹右键菜单中启用的压缩动作 key。
     pub compress_verbs: Vec<String>,
     /// 目录空白处右键菜单动作 key。
@@ -88,6 +90,7 @@ impl Default for ShellOptions {
             .into_iter()
             .map(ToString::to_string)
             .collect(),
+            hash_menu: true,
             compress_verbs: ["zip", "sevenz", "each_zip", "gui"]
                 .into_iter()
                 .map(ToString::to_string)

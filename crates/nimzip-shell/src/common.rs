@@ -119,9 +119,17 @@ pub(crate) const VERB_TEST: VerbSpec = VerbSpec {
 };
 
 pub(crate) const VERB_HASH: VerbSpec = VerbSpec {
-    key: "NimZip.330.HashSha256",
-    label: "计算 SHA-256 哈希",
-    args: &["--cli", "h", PLACEHOLDER, "-a", "sha256"],
+    key: "NimZip.330.Hash",
+    label: "计算文件哈希…",
+    args: &["--hash", PLACEHOLDER],
+    multi_select: Some("Player"),
+};
+
+/// 压缩包菜单中的哈希入口；使用独立 key，避免平铺模式与普通文件菜单冲突。
+pub(crate) const VERB_HASH_ARCHIVE: VerbSpec = VerbSpec {
+    key: "NimZip.331.HashArchive",
+    label: "计算文件哈希…",
+    args: &["--hash", PLACEHOLDER],
     multi_select: Some("Player"),
 };
 
@@ -247,7 +255,6 @@ const EXTRACT_VERBS: &[(&str, &VerbSpec)] = &[
     ("admin", &VERB_EXTRACT_ADMIN),
     ("test", &VERB_TEST),
     ("preview", &VERB_PREVIEW),
-    ("hash", &VERB_HASH),
 ];
 
 const COMPRESS_VERBS: &[(&str, &VerbSpec)] = &[

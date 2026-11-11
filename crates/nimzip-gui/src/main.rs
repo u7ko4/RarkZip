@@ -74,7 +74,8 @@ fn main() -> std::process::ExitCode {
     // --new-here <目录> 以该目录作为输出位置打开新建压缩包页。
     let new_sources = take_flag_values(&mut args, "--new");
     let new_output = take_flag_value(&mut args, "--new-here");
-    if !new_sources.is_empty() || new_output.is_some() {
+    let hash_sources = take_flag_values(&mut args, "--hash");
+    if !new_sources.is_empty() || new_output.is_some() || !hash_sources.is_empty() {
         forced_gui = true;
     }
 
@@ -179,14 +180,20 @@ fn main() -> std::process::ExitCode {
         return nimzip_cli::run_with_args(args);
     }
 
-    let initial_path = if new_sources.is_empty() && new_output.is_none() {
+    let initial_path = if new_sources.is_empty() && new_output.is_none() && hash_sources.is_empty()
+    {
         args.get(1).map(PathBuf::from)
     } else {
         None
     };
     let settings = Settings::load();
-    let feature_window =
-        (!new_sources.is_empty() || new_output.is_some()).then_some(app::FeatureWindow::NewArchive);
+    let feature_window = if !hash_sources.is_empty() {
+        Some(app::FeatureWindow::Hash)
+    } else if !new_sources.is_empty() || new_output.is_some() {
+        Some(app::FeatureWindow::NewArchive)
+    } else {
+        None
+    };
     let (width, height) = if let Some(action) = &quick_action {
         let (width, remembered_height) = settings.window_size(action.key(), action.default_size());
         // 进度页按实际内容收紧窗口，避免沿用旧版本记住的 560 高而底部留白。
@@ -251,6 +258,7 @@ fn main() -> std::process::ExitCode {
             };
             let path = initial_path.clone();
             let new_sources = new_sources.clone();
+            let hash_sources = hash_sources.clone();
             let new_output = new_output.clone();
             let feature = feature_window;
             if let Some(action) = quick_action.clone() {
@@ -261,13 +269,20 @@ fn main() -> std::process::ExitCode {
             } else {
                 gpui_kit::open_window(options, cx, move |window, cx| {
                     cx.new(|cx| match feature {
-                        Some(feature) => app::MainView::new_feature(
-                            window,
-                            cx,
-                            feature,
-                            new_sources.clone(),
-                            new_output.clone(),
-                        ),
+                        Some(feature) => {
+                            let sources = if matches!(feature, app::FeatureWindow::Hash) {
+                                hash_sources.clone()
+                            } else {
+                                new_sources.clone()
+                            };
+                            app::MainView::new_feature(
+                                window,
+                                cx,
+                                feature,
+                                sources,
+                                new_output.clone(),
+                            )
+                        }
                         None => app::MainView::new(window, cx, path.clone(), None, None),
                     })
                 })
