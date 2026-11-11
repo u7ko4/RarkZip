@@ -1,6 +1,7 @@
 use crate::app::*;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::Icon;
 use gpui_kit::component::{Disableable, Sizable};
 
 impl MainView {
@@ -186,20 +187,27 @@ impl MainView {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(2.0))
-                    .ml(px(6.0))
+                    .h_full()
                     .child(self.window_control(
                         "win-min",
                         IconName::Minus,
                         WindowControlArea::Min,
                         false,
+                        toolbar_height,
                     ))
-                    .child(self.window_control("win-max", max_icon, WindowControlArea::Max, false))
+                    .child(self.window_control(
+                        "win-max",
+                        max_icon,
+                        WindowControlArea::Max,
+                        false,
+                        toolbar_height,
+                    ))
                     .child(self.window_control(
                         "win-close",
                         IconName::X,
                         WindowControlArea::Close,
                         true,
+                        toolbar_height,
                     ))
                     .into_any_element(),
             )
@@ -225,9 +233,7 @@ impl MainView {
                 icon_button("top-theme", IconName::Contrast, "切换浅色/暗色主题")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
             )
-            .when_some(controls, |this, controls| {
-                this.child(separator()).child(controls)
-            })
+            .when_some(controls, |this, controls| this.child(controls))
             .into_any_element()
     }
 
@@ -237,23 +243,24 @@ impl MainView {
         icon_name: IconName,
         area: WindowControlArea,
         danger: bool,
+        size: f32,
     ) -> AnyElement {
         let palette = self.palette;
         let control = div()
             .id(id)
-            .w(px(crate::components::ICON_BUTTON_SIZE))
-            .h(px(crate::components::ICON_BUTTON_HEIGHT))
-            .rounded(px(6.0))
+            .w(px(size))
+            .h(px(size))
             .flex()
             .items_center()
             .justify_center()
             .cursor_pointer()
+            .text_color(palette.text)
             .when(danger, |this| {
                 this.hover(|style| style.bg(palette.bad).text_color(palette.white))
             })
             .when(!danger, |this| this.hover(|style| style.bg(palette.hover)))
             .window_control_area(area)
-            .child(icon(icon_name, palette.sub, 16.0));
+            .child(Icon::new(icon_name).size(px((size * 0.45).clamp(14.0, 16.0))));
 
         #[cfg(not(target_os = "windows"))]
         let control = control.on_click(move |_, window, _| match area {
@@ -281,9 +288,9 @@ impl MainView {
         div()
             .flex()
             .items_center()
-            .h(px(36.0))
+            .h(px(crate::theme::TITLEBAR_HEIGHT))
             .pl(px(12.0))
-            .pr(px(4.0))
+            .pr(px(0.0))
             .bg(palette.bar)
             .border_b_1()
             .border_color(palette.line)
@@ -291,15 +298,22 @@ impl MainView {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(9.0))
+                    .gap(px(8.0))
                     .flex_1()
+                    .min_w_0()
                     .h_full()
                     .window_control_area(WindowControlArea::Drag)
-                    .child(icon(feature.icon(), palette.accent, 16.0))
+                    .child(icon(
+                        feature.icon(),
+                        palette.accent,
+                        crate::theme::TITLEBAR_ICON_SIZE,
+                    ))
                     .child(
                         div()
-                            .text_size(crate::theme::font_px(13.5))
-                            .font_weight(FontWeight::NORMAL)
+                            .min_w_0()
+                            .truncate()
+                            .text_size(crate::theme::font_px(crate::theme::TITLEBAR_FONT_SIZE))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
                             .child(feature.title()),
                     ),
@@ -308,24 +322,27 @@ impl MainView {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(2.0))
+                    .h_full()
                     .child(self.window_control(
                         "feature-win-min",
                         IconName::Minus,
                         WindowControlArea::Min,
                         false,
+                        crate::theme::TITLEBAR_HEIGHT,
                     ))
                     .child(self.window_control(
                         "feature-win-max",
                         max_icon,
                         WindowControlArea::Max,
                         false,
+                        crate::theme::TITLEBAR_HEIGHT,
                     ))
                     .child(self.window_control(
                         "feature-win-close",
                         IconName::X,
                         WindowControlArea::Close,
                         true,
+                        crate::theme::TITLEBAR_HEIGHT,
                     )),
             )
             .into_any_element()

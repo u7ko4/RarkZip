@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -939,9 +940,9 @@ impl QuickView {
         div()
             .flex()
             .items_center()
-            .h(px(36.0))
+            .h(px(crate::theme::TITLEBAR_HEIGHT))
             .pl(px(12.0))
-            .pr(px(4.0))
+            .pr(px(0.0))
             .bg(palette.bar)
             .border_b_1()
             .border_color(palette.line)
@@ -949,17 +950,21 @@ impl QuickView {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(9.0))
+                    .gap(px(8.0))
                     .flex_1()
                     .h_full()
                     .window_control_area(WindowControlArea::Drag)
-                    .child(icon(self.step_icon(), palette.accent, 16.0))
+                    .child(icon(
+                        self.step_icon(),
+                        palette.accent,
+                        crate::theme::TITLEBAR_ICON_SIZE,
+                    ))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
-                            .text_size(crate::theme::body())
-                            .font_weight(FontWeight::NORMAL)
+                            .text_size(crate::theme::font_px(crate::theme::TITLEBAR_FONT_SIZE))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
                             .child(title),
                     ),
@@ -968,24 +973,27 @@ impl QuickView {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(2.0))
+                    .h_full()
                     .child(self.window_control(
                         "quick-min",
                         IconName::Minus,
                         WindowControlArea::Min,
                         false,
+                        crate::theme::TITLEBAR_HEIGHT,
                     ))
                     .child(self.window_control(
                         "quick-max",
                         max_icon,
                         WindowControlArea::Max,
                         false,
+                        crate::theme::TITLEBAR_HEIGHT,
                     ))
                     .child(self.window_control(
                         "quick-close",
                         IconName::X,
                         WindowControlArea::Close,
                         true,
+                        crate::theme::TITLEBAR_HEIGHT,
                     )),
             )
             .into_any_element()
@@ -1012,23 +1020,24 @@ impl QuickView {
         icon_name: IconName,
         area: WindowControlArea,
         danger: bool,
+        size: f32,
     ) -> AnyElement {
         let palette = self.palette;
         let control = div()
             .id(id)
-            .w(px(ICON_BUTTON_SIZE))
-            .h(px(ICON_BUTTON_HEIGHT))
-            .rounded(px(crate::theme::RADIUS_CONTROL))
+            .w(px(size))
+            .h(px(size))
             .flex()
             .items_center()
             .justify_center()
             .cursor_pointer()
+            .text_color(palette.text)
             .when(danger, |this| {
                 this.hover(|style| style.bg(palette.bad).text_color(palette.white))
             })
             .when(!danger, |this| this.hover(|style| style.bg(palette.hover)))
             .window_control_area(area)
-            .child(icon(icon_name, palette.sub, 16.0));
+            .child(Icon::new(icon_name).size(px((size * 0.45).clamp(14.0, 16.0))));
 
         #[cfg(not(target_os = "windows"))]
         let control = control.on_click(move |_, window, _| match area {

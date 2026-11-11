@@ -33,6 +33,13 @@ pub fn font_px(size: f32) -> Pixels {
 pub const RADIUS_CONTROL: f32 = 6.0;
 pub const RADIUS_OVERLAY: f32 = 10.0;
 
+/// 自定义标题栏高度，对齐 Windows 平台 caption 高度。
+pub const TITLEBAR_HEIGHT: f32 = 34.0;
+/// 标题文字尺寸：比正文略小，使用 Semibold。
+pub const TITLEBAR_FONT_SIZE: f32 = 13.0;
+/// 标题栏左侧应用/功能图标尺寸。
+pub const TITLEBAR_ICON_SIZE: f32 = 16.0;
+
 pub fn caption() -> Pixels {
     font_px(12.0)
 }
