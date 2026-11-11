@@ -66,7 +66,7 @@ impl QuickAction {
     pub fn default_size(&self) -> (f32, f32) {
         match self {
             // 选择路径页包含常用位置与 5 个复选项，620×640 刚好铺满。
-            Self::ExtractTo { .. } => (620.0, 640.0),
+            Self::ExtractTo { .. } => (620.0, 590.0),
             // 右键直接解压/压缩从进度页开始，去掉完成后关闭选项后进一步收紧。
             Self::ExtractPreset { .. } | Self::Compress { .. } => (640.0, 405.0),
         }
@@ -745,8 +745,8 @@ impl QuickView {
         // 内容区随界面字号缩放；去掉“内容/最近处理”后，进度与结果页按实际内容收紧高度。
         let font_delta = (crate::theme::ui_font_size() - 13.0) * 18.0;
         let (width, height) = match self.step {
-            Step::Password => (self.base_size.0.clamp(500.0, 640.0), 480.0),
-            Step::Conflict => (self.base_size.0.max(600.0), 560.0),
+            Step::Password => (self.base_size.0.clamp(500.0, 640.0), 440.0),
+            Step::Conflict => (self.base_size.0.max(600.0), 480.0),
             Step::Progress => (self.base_size.0, (405.0 + font_delta).clamp(390.0, 510.0)),
             Step::Done | Step::Failed => {
                 (self.base_size.0, (375.0 + font_delta).clamp(350.0, 480.0))

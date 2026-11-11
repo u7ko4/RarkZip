@@ -90,9 +90,9 @@ impl FeatureWindow {
 
     pub(crate) fn size(self) -> (f32, f32) {
         match self {
-            Self::NewArchive => (980.0, 620.0),
+            Self::NewArchive => (980.0, 580.0),
             Self::PasswordRecovery => (720.0, 620.0),
-            Self::Hash => (820.0, 520.0),
+            Self::Hash => (820.0, 480.0),
         }
     }
 
