@@ -13,7 +13,6 @@ pub(crate) enum DropdownKind {
     SettingsSkin,
     NewFormat,
     NewZipAlgorithm,
-    HashAlgorithm,
 }
 
 #[derive(Debug, Clone)]
@@ -221,15 +220,6 @@ impl MainView {
                     })
                     .collect()
             }
-            DropdownKind::HashAlgorithm => HashAlgorithm::ALL
-                .iter()
-                .map(|algorithm| {
-                    DropdownOption::new(
-                        algorithm.label().to_string(),
-                        *algorithm == self.hash_batch_algorithm,
-                    )
-                })
-                .collect(),
         }
     }
 
@@ -319,12 +309,6 @@ impl MainView {
                     if let Some(draft) = &mut self.new_draft {
                         draft.zip_algorithm = algorithm;
                     }
-                }
-            }
-            DropdownKind::HashAlgorithm => {
-                if let Some(algorithm) = HashAlgorithm::ALL.get(index).copied() {
-                    self.hash_batch_algorithm = algorithm;
-                    self.hash_batch_results.clear();
                 }
             }
         }
@@ -491,7 +475,6 @@ impl DropdownKind {
             Self::SettingsSkin => "skin",
             Self::NewFormat => "new-format",
             Self::NewZipAlgorithm => "new-zip-algorithm",
-            Self::HashAlgorithm => "hash-algorithm",
         }
     }
 }

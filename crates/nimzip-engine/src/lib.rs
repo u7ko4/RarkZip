@@ -49,7 +49,7 @@ pub use extract::{
 };
 pub use format::{ArchiveFormat, Codepage};
 pub use hash::{
-    checksum_contents, checksum_expectations, compare_hash, hash_bytes, hash_file,
+    checksum_contents, checksum_expectations, compare_hash, hash_bytes, hash_file, hash_file_many,
     hash_file_with_progress, load_checksum_file, parse_checksum_text, save_checksum_file,
     ChecksumFileEntry, HashAlgorithm,
 };

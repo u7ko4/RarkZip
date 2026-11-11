@@ -10,7 +10,7 @@ use crate::paths::to_extended;
 use crate::progress::{check_cancelled, Phase, Progress, ProgressSink};
 use crate::util::COPY_BUFFER_SIZE;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HashAlgorithm {
     Md5,
@@ -211,6 +211,46 @@ pub fn hash_file_with_progress(
         ));
     }
     Ok(hasher.finish_hex())
+}
+
+/// 单次读取文件，同时计算多个哈希。用于哈希窗口的多列显示。
+pub fn hash_file_many(
+    algorithms: &[HashAlgorithm],
+    path: &Path,
+    sink: &dyn ProgressSink,
+) -> Result<Vec<(HashAlgorithm, String)>> {
+    let mut file = File::open(to_extended(path))?;
+    let total = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let mut hashers: Vec<(HashAlgorithm, HasherState)> = algorithms
+        .iter()
+        .copied()
+        .map(|algorithm| (algorithm, HasherState::new(algorithm)))
+        .collect();
+    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut done = 0u64;
+    loop {
+        check_cancelled(sink)?;
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        for (_, hasher) in &mut hashers {
+            hasher.update(&buffer[..read]);
+        }
+        done += read as u64;
+        sink.update(&Progress::new(
+            Phase::Hashing,
+            done,
+            total,
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ));
+    }
+    Ok(hashers
+        .into_iter()
+        .map(|(algorithm, hasher)| (algorithm, hasher.finish_hex()))
+        .collect())
 }
 
 /// 生成标准校验文件内容：`<hash>  <filename>`。

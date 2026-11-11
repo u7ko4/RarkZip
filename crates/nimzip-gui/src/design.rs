@@ -373,17 +373,6 @@ fn page_shell_inner(
         .into_any_element()
 }
 
-pub fn page_actions(children: Vec<AnyElement>) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap(px(10.0))
-        .pt(px(6.0))
-        .children(children)
-        .into_any_element()
-}
-
 pub fn info_note(palette: &Palette, text: impl Into<SharedString>) -> AnyElement {
     div()
         .flex()

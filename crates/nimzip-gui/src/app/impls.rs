@@ -928,6 +928,43 @@ impl MainView {
         cx.notify();
     }
 
+    pub(super) fn toggle_hash_algorithm(
+        &mut self,
+        algorithm: HashAlgorithm,
+        cx: &mut Context<Self>,
+    ) {
+        if self.hash_batch_running {
+            return;
+        }
+        if let Some(position) = self
+            .hash_batch_algorithms
+            .iter()
+            .position(|candidate| *candidate == algorithm)
+        {
+            if self.hash_batch_algorithms.len() <= 1 {
+                self.show_toast("至少保留一个哈希算法", ToastKind::Info, cx);
+                return;
+            }
+            self.hash_batch_algorithms.remove(position);
+        } else {
+            if self.hash_batch_algorithms.len() >= 6 {
+                self.show_toast("最多同时显示 6 个哈希算法", ToastKind::Info, cx);
+                return;
+            }
+            self.hash_batch_algorithms.push(algorithm);
+        }
+        self.hash_batch_algorithms.sort_by_key(|candidate| {
+            HashAlgorithm::ALL
+                .iter()
+                .position(|item| item == candidate)
+                .unwrap_or(usize::MAX)
+        });
+        self.hash_batch_results.clear();
+        self.hash_batch_error = None;
+        self.hash_batch_progress = (0, 0);
+        cx.notify();
+    }
+
     pub(super) fn start_hash_batch(&mut self, cx: &mut Context<Self>) {
         if self.hash_batch_running || self.hash_batch_paths.is_empty() {
             return;
@@ -935,7 +972,7 @@ impl MainView {
         self.hash_batch_run_id += 1;
         let run_id = self.hash_batch_run_id;
         let paths = self.hash_batch_paths.clone();
-        let algorithm = self.hash_batch_algorithm;
+        let algorithms = self.hash_batch_algorithms.clone();
         let total = paths.len();
         self.hash_batch_running = true;
         self.hash_batch_results.clear();
@@ -945,16 +982,16 @@ impl MainView {
         std::thread::spawn(move || {
             let mut results = Vec::with_capacity(paths.len());
             for (index, path) in paths.iter().enumerate() {
-                let result = hash_file_with_progress(algorithm, path, &nimzip_engine::NoopSink);
+                let result = hash_file_many(&algorithms, path, &nimzip_engine::NoopSink);
                 results.push(match result {
-                    Ok(hash) => HashBatchItem {
+                    Ok(hashes) => HashBatchItem {
                         path: path.clone(),
-                        hash,
+                        hashes,
                         error: None,
                     },
                     Err(error) => HashBatchItem {
                         path: path.clone(),
-                        hash: String::new(),
+                        hashes: Vec::new(),
                         error: Some(error.to_string()),
                     },
                 });
@@ -1540,7 +1577,6 @@ impl MainView {
         self.hash_batch_error = None;
         self.hash_batch_running = false;
         self.hash_batch_progress = (0, 0);
-        self.hash_batch_algorithm = HashAlgorithm::Sha256;
         self.page = Page::Hash;
         self.modal = None;
         cx.notify();

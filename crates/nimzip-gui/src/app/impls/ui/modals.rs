@@ -4,15 +4,108 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::Disableable;
-use nimzip_engine::ArchiveFormat;
+use nimzip_engine::{ArchiveFormat, HashAlgorithm};
 
 use crate::app::impls::default_output_dir;
 use crate::app::*;
 use crate::design;
 
 type ClickCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-/// 批量哈希结果行：路径、哈希、错误、校验结果。
-type HashRowSnapshot = (PathBuf, Option<String>, Option<String>, Option<bool>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HashRowStatus {
+    Pending,
+    Done,
+    Match,
+    Insecure,
+    Mismatch,
+    Unchecked,
+    Error,
+}
+
+fn expected_hash_for<'a>(
+    path: &std::path::Path,
+    expected: &'a std::collections::HashMap<String, String>,
+) -> Option<&'a str> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    expected
+        .get(&name)
+        .or_else(|| expected.get("*"))
+        .map(String::as_str)
+}
+
+fn hash_row_status(
+    item: &HashBatchItem,
+    expected: &std::collections::HashMap<String, String>,
+) -> HashRowStatus {
+    if item.error.is_some() {
+        return HashRowStatus::Error;
+    }
+    if item.hashes.is_empty() {
+        return HashRowStatus::Pending;
+    }
+    if expected.is_empty() {
+        return HashRowStatus::Done;
+    }
+    let Some(expected) = expected_hash_for(&item.path, expected) else {
+        return HashRowStatus::Unchecked;
+    };
+    let matches: Vec<HashAlgorithm> = item
+        .hashes
+        .iter()
+        .filter(|(_, hash)| hash.eq_ignore_ascii_case(expected))
+        .map(|(algorithm, _)| *algorithm)
+        .collect();
+    if matches.is_empty() {
+        HashRowStatus::Mismatch
+    } else if matches
+        .iter()
+        .all(|algorithm| matches!(algorithm, HashAlgorithm::Md5 | HashAlgorithm::Sha1))
+    {
+        HashRowStatus::Insecure
+    } else {
+        HashRowStatus::Match
+    }
+}
+
+fn hash_export_contents(items: &[HashBatchItem], format: HashExportFormat) -> String {
+    let algorithm = match format {
+        HashExportFormat::Sha256Sum => HashAlgorithm::Sha256,
+        HashExportFormat::Md5Sum => HashAlgorithm::Md5,
+        HashExportFormat::Sfv => HashAlgorithm::Crc32,
+    };
+    let mut lines = Vec::new();
+    for item in items {
+        if item.error.is_some() {
+            continue;
+        }
+        let Some((_, hash)) = item
+            .hashes
+            .iter()
+            .find(|(candidate, _)| *candidate == algorithm)
+        else {
+            continue;
+        };
+        let name = item
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| item.path.display().to_string());
+        let hash = if format == HashExportFormat::Sfv {
+            hash.to_ascii_uppercase()
+        } else {
+            hash.clone()
+        };
+        lines.push(format!("{hash}  {name}"));
+    }
+    lines.join(
+        "
+
+",
+    )
+}
 
 impl MainView {
     pub(in crate::app) fn render_modal(
@@ -899,7 +992,7 @@ impl MainView {
                         IconName::FolderOpen,
                         palette.text,
                         cx.listener(|this, _, window, cx| {
-                            let Some(path) = crate::components::file_dialog_in(window, || {
+                            let Some(path) = crate::components::file_dialog_in(window, move || {
                                 rfd::FileDialog::new()
                                     .add_filter(
                                         "压缩包",
@@ -1096,7 +1189,7 @@ impl MainView {
                         IconName::FileText,
                         palette.text,
                         cx.listener(|this, _, window, cx| {
-                            let Some(path) = crate::components::file_dialog_in(window, || {
+                            let Some(path) = crate::components::file_dialog_in(window, move || {
                                 rfd::FileDialog::new()
                                     .add_filter("字典/密码本", &["txt", "lst", "dict", "csv"])
                                     .pick_file()
@@ -1858,60 +1951,221 @@ impl MainView {
 
     pub(in crate::app) fn render_hash_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
-        let algorithm = self.hash_batch_algorithm;
         let running = self.hash_batch_running;
         let count = self.hash_batch_paths.len();
-        let entity = cx.entity();
+        let algorithms = self.hash_batch_algorithms.clone();
+        let expected = self.hash_batch_expected.clone();
+        let expected_present = !expected.is_empty();
+        let has_results = !self.hash_batch_results.is_empty();
+        let (done, total) = self.hash_batch_progress;
 
-        let algorithm_control = div()
-            .id("hashbatch-alg")
-            .role(Role::Button)
-            .aria_label(algorithm.label().to_string())
-            .h(px(36.0))
-            .px(px(14.0))
-            .rounded(px(crate::theme::RADIUS_CONTROL))
-            .border_1()
-            .border_color(palette.line_strong)
-            .bg(palette.bg)
+        let mut matched = 0usize;
+        let mut insecure = 0usize;
+        let mut mismatched = 0usize;
+        let mut unchecked = 0usize;
+        let mut errors = 0usize;
+        if expected_present {
+            for item in &self.hash_batch_results {
+                match hash_row_status(item, &expected) {
+                    HashRowStatus::Match => matched += 1,
+                    HashRowStatus::Insecure => insecure += 1,
+                    HashRowStatus::Mismatch => mismatched += 1,
+                    HashRowStatus::Unchecked => unchecked += 1,
+                    HashRowStatus::Error => errors += 1,
+                    HashRowStatus::Pending | HashRowStatus::Done => {}
+                }
+            }
+        }
+
+        let (state_icon, state_color, state_text) = if running {
+            (
+                IconName::Hash,
+                palette.accent,
+                format!("正在计算… {done} / {total}"),
+            )
+        } else if count == 0 {
+            (IconName::Hash, palette.muted, "尚未添加文件".to_string())
+        } else if has_results {
+            (
+                IconName::CircleCheck,
+                palette.ok,
+                format!("计算完成 · {count} 个文件"),
+            )
+        } else {
+            (IconName::Hash, palette.muted, "等待开始".to_string())
+        };
+        let recalc = Button::new("hash-recalc")
+            .label(if has_results {
+                "重新计算"
+            } else {
+                "开始计算"
+            })
+            .icon(icon(IconName::RotateCcw, palette.text, 14.0))
+            .outline()
+            .h(px(32.0))
+            .px(px(12.0))
+            .text_size(crate::theme::caption())
+            .disabled(running || count == 0)
+            .opacity(if running || count == 0 { 0.45 } else { 1.0 })
+            .on_click(cx.listener(|this, _, _, cx| this.start_hash_batch(cx)));
+
+        let status_row = div()
             .flex()
             .items_center()
             .gap(px(10.0))
-            .cursor_pointer()
-            .text_size(crate::theme::body())
-            .text_color(palette.text)
-            .hover(|style| style.border_color(palette.accent))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.open_dropdown(DropdownKind::HashAlgorithm, cx);
-            }))
-            .on_a11y_action(AccessibleAction::Click, move |_, _, app| {
-                entity.update(app, |this, cx| {
-                    this.open_dropdown(DropdownKind::HashAlgorithm, cx);
-                });
-            })
-            .child(algorithm.label().to_string())
-            .child(icon(IconName::ChevronDown, palette.muted, 14.0));
-
-        let algorithm_row = div()
-            .flex()
-            .items_center()
-            .gap(px(14.0))
+            .child(icon(state_icon, state_color, 16.0))
             .child(
                 div()
                     .text_size(crate::theme::body())
-                    .text_color(palette.sub)
-                    .child("算法"),
+                    .text_color(if running {
+                        palette.accent
+                    } else {
+                        palette.text
+                    })
+                    .child(state_text),
             )
-            .child(self.track_dropdown(
-                DropdownKind::HashAlgorithm,
-                algorithm_control.into_any_element(),
-                cx,
-            ))
+            .when(running, |this| {
+                let percent = if total == 0 {
+                    0.0
+                } else {
+                    done as f32 / total as f32 * 100.0
+                };
+                this.child(div().w(px(150.0)).child(progress_bar(
+                    percent,
+                    &palette,
+                    palette.accent,
+                )))
+            })
+            .when(expected_present && has_results, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(design::pill(
+                            &palette,
+                            format!("匹配 {matched}"),
+                            design::TagTone::Ok,
+                        ))
+                        .when(insecure > 0, |this| {
+                            this.child(design::pill(
+                                &palette,
+                                format!("不安全 {insecure}"),
+                                design::TagTone::Manual,
+                            ))
+                        })
+                        .when(mismatched > 0, |this| {
+                            this.child(design::pill(
+                                &palette,
+                                format!("不匹配 {mismatched}"),
+                                design::TagTone::Danger,
+                            ))
+                        })
+                        .when(unchecked > 0, |this| {
+                            this.child(design::pill(
+                                &palette,
+                                format!("未校验 {unchecked}"),
+                                design::TagTone::Neutral,
+                            ))
+                        })
+                        .when(errors > 0, |this| {
+                            this.child(design::pill(
+                                &palette,
+                                format!("错误 {errors}"),
+                                design::TagTone::Danger,
+                            ))
+                        }),
+                )
+            })
+            .child(div().flex_1())
+            .child(recalc);
+
+        let verify_hint = if expected.contains_key("*") {
+            "已识别粘贴哈希".to_string()
+        } else if expected_present {
+            format!("已载入 {} 条期望", expected.len())
+        } else {
+            "未设置".to_string()
+        };
+        let verify_row = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .flex_none()
                     .text_size(crate::theme::caption())
-                    .text_color(palette.muted)
-                    .child("切换算法后将重新计算所有结果"),
+                    .text_color(palette.sub)
+                    .child(icon(IconName::Target, palette.sub, 14.0))
+                    .child("校验"),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(crate::components::control_height(Input::new(
+                        &self.hash_verify_input,
+                    ))),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(crate::theme::caption())
+                    .text_color(if expected_present {
+                        palette.accent
+                    } else {
+                        palette.muted
+                    })
+                    .child(verify_hint),
             );
+
+        let mut column_row = div().flex().items_center().gap(px(6.0)).child(
+            div()
+                .flex_none()
+                .text_size(crate::theme::caption())
+                .text_color(palette.sub)
+                .child("列"),
+        );
+        for algorithm in HashAlgorithm::ALL {
+            let selected = algorithms.contains(&algorithm);
+            column_row = column_row.child(
+                div()
+                    .id(format!("hash-alg-{}", algorithm.name()))
+                    .role(Role::Button)
+                    .aria_label(algorithm.label())
+                    .h(px(26.0))
+                    .px(px(8.0))
+                    .rounded(px(5.0))
+                    .border_1()
+                    .border_color(if selected {
+                        palette.accent_soft
+                    } else {
+                        palette.line
+                    })
+                    .bg(if selected {
+                        palette.accent_soft
+                    } else {
+                        palette.bg
+                    })
+                    .text_size(crate::theme::caption())
+                    .text_color(if selected {
+                        palette.accent
+                    } else {
+                        palette.sub
+                    })
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .hover(|style| style.border_color(palette.line_strong))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_hash_algorithm(algorithm, cx);
+                    }))
+                    .child(algorithm.label()),
+            );
+        }
 
         let add_file = || {
             design::secondary_icon_action(
@@ -1938,7 +2192,7 @@ impl MainView {
                 IconName::Upload,
                 palette.text,
                 cx.listener(|this, _, window, cx| {
-                    let Some(path) = crate::components::file_dialog_in(window, || {
+                    let Some(path) = crate::components::file_dialog_in(window, move || {
                         rfd::FileDialog::new()
                             .add_filter(
                                 "校验文件",
@@ -1951,8 +2205,26 @@ impl MainView {
                     match nimzip_engine::load_checksum_file(&path) {
                         Ok(entries) => {
                             let count = entries.len();
+                            if let Some(parent) = path.parent() {
+                                for entry in &entries {
+                                    let candidate = parent.join(
+                                        entry
+                                            .file_name
+                                            .replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR),
+                                    );
+                                    if candidate.is_file()
+                                        && !this.hash_batch_paths.contains(&candidate)
+                                    {
+                                        this.hash_batch_paths.push(candidate);
+                                    }
+                                }
+                            }
                             this.hash_batch_expected =
                                 nimzip_engine::checksum_expectations(&entries);
+                            this.hash_verify_input.update(cx, |state, cx| {
+                                state.set_value("", window, cx);
+                            });
+                            this.hash_batch_results.clear();
                             this.show_toast(
                                 format!("已载入 {count} 条期望哈希"),
                                 ToastKind::Success,
@@ -1970,13 +2242,26 @@ impl MainView {
             )
         };
 
-        let mut body: Vec<AnyElement> = vec![algorithm_row.into_any_element()];
+        let mut body: Vec<AnyElement> = vec![
+            status_row.into_any_element(),
+            verify_row.into_any_element(),
+            column_row.into_any_element(),
+        ];
+        if let Some(error) = self.hash_batch_error.clone() {
+            body.push(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.bad)
+                    .child(error)
+                    .into_any_element(),
+            );
+        }
 
         if count == 0 {
             body.push(design::dropzone(
                 &palette,
                 IconName::Hash,
-                44.0,
+                40.0,
                 "尚未添加文件 · 可添加多个文件或整个文件夹",
                 "也可以直接把文件拖到这里",
                 vec![
@@ -1984,30 +2269,10 @@ impl MainView {
                     add_folder().into_any_element(),
                     load_checksum().into_any_element(),
                 ],
-                300.0,
+                250.0,
             ));
         } else {
-            let expected_present = !self.hash_batch_expected.is_empty();
-            let rows: Vec<HashRowSnapshot> = self
-                .hash_batch_paths
-                .iter()
-                .map(|path| {
-                    let result = self
-                        .hash_batch_results
-                        .iter()
-                        .find(|item| &item.path == path);
-                    let hash = result
-                        .filter(|item| item.error.is_none())
-                        .map(|item| item.hash.clone());
-                    let error = result.and_then(|item| item.error.clone());
-                    let status = hash.as_ref().and_then(|hash| {
-                        nimzip_engine::compare_hash(path, hash, &self.hash_batch_expected)
-                    });
-                    (path.clone(), hash, error, status)
-                })
-                .collect();
-
-            let clear = (count > 0 && !running).then(|| {
+            let clear = (!running).then(|| {
                 design::link_action(
                     "hashbatch-clear",
                     "清空",
@@ -2022,16 +2287,15 @@ impl MainView {
                     }),
                 )
             });
-
             let toolbar = div()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
+                .gap(px(8.0))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(px(7.0))
                         .text_size(crate::theme::body())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(palette.text)
@@ -2043,85 +2307,85 @@ impl MainView {
                 .child(add_folder())
                 .child(load_checksum());
 
-            let header_cell =
-                |text: &'static str, width: Option<f32>, flex: bool, align_end: bool| {
-                    div()
-                        .text_size(crate::theme::caption())
-                        .text_color(palette.muted)
-                        .font_weight(FontWeight::MEDIUM)
-                        .when(flex, |this| this.flex_1().min_w_0())
-                        .when_some(width, |this, width| this.w(px(width)).flex_shrink_0())
-                        .when(align_end, |this| this.text_right())
-                        .child(text)
-                };
+            let file_width = if algorithms.len() <= 4 { 220.0 } else { 170.0 };
             let mut table = div().w_full().flex().flex_col();
-            table = table.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h(px(38.0))
-                    .px(px(16.0))
-                    .bg(palette.panel)
-                    .border_b_1()
-                    .border_color(palette.line)
-                    .child(header_cell("文件", None, true, false))
-                    .child(header_cell("哈希", Some(380.0), false, false))
-                    .child(header_cell("校验", Some(86.0), false, false))
-                    .child(header_cell("操作", Some(76.0), false, true)),
-            );
-
-            for (index, (path, hash, error, status)) in rows.into_iter().enumerate() {
-                let is_last = index + 1 == count;
-                let status_tag = match (&error, status, expected_present) {
-                    (Some(_), _, _) => design::tag(&palette, "失败", design::TagTone::Danger),
-                    (None, Some(true), _) => design::tag(&palette, "匹配", design::TagTone::Ok),
-                    (None, Some(false), _) => {
-                        design::tag(&palette, "不匹配", design::TagTone::Danger)
-                    }
-                    (None, None, true) => design::tag(&palette, "未校验", design::TagTone::Neutral),
-                    (None, None, false) if hash.is_some() => {
-                        design::tag(&palette, "已完成", design::TagTone::Ok)
-                    }
-                    (None, None, false) => {
-                        design::tag(&palette, "待计算", design::TagTone::Neutral)
-                    }
-                };
-                let hash_text = match (&error, &hash) {
-                    (Some(error), _) => div()
-                        .truncate()
-                        .font_family("Cascadia Mono")
-                        .text_size(crate::theme::caption())
-                        .text_color(palette.bad)
-                        .child(error.clone()),
-                    (None, Some(hash)) => div()
-                        .truncate()
-                        .font_family("Cascadia Mono")
-                        .text_size(crate::theme::caption())
-                        .text_color(palette.sub)
-                        .child(hash.clone()),
-                    (None, None) => div()
+            let mut header = div()
+                .flex()
+                .items_center()
+                .h(px(38.0))
+                .px(px(14.0))
+                .bg(palette.panel)
+                .border_b_1()
+                .border_color(palette.line)
+                .child(
+                    div()
+                        .w(px(file_width))
+                        .flex_shrink_0()
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("—"),
+                        .child("文件"),
+                );
+            for algorithm in &algorithms {
+                header = header.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .px(px(6.0))
+                        .truncate()
+                        .text_size(crate::theme::caption())
+                        .text_color(palette.muted)
+                        .child(algorithm.label()),
+                );
+            }
+            header = header
+                .child(
+                    div()
+                        .w(px(72.0))
+                        .flex_shrink_0()
+                        .text_size(crate::theme::caption())
+                        .text_color(palette.muted)
+                        .child("状态"),
+                )
+                .child(div().w(px(40.0)).flex_shrink_0());
+            table = table.child(header);
+
+            for (index, path) in self.hash_batch_paths.clone().into_iter().enumerate() {
+                let result = self
+                    .hash_batch_results
+                    .iter()
+                    .find(|item| item.path == path)
+                    .cloned();
+                let status = result
+                    .as_ref()
+                    .map(|item| hash_row_status(item, &expected))
+                    .unwrap_or(HashRowStatus::Pending);
+                let (status_label, status_tone) = match status {
+                    HashRowStatus::Pending => ("待计算", design::TagTone::Neutral),
+                    HashRowStatus::Done => ("已计算", design::TagTone::Neutral),
+                    HashRowStatus::Match => ("匹配", design::TagTone::Ok),
+                    HashRowStatus::Insecure => ("不安全", design::TagTone::Manual),
+                    HashRowStatus::Mismatch => ("不匹配", design::TagTone::Danger),
+                    HashRowStatus::Unchecked => ("未校验", design::TagTone::Neutral),
+                    HashRowStatus::Error => ("错误", design::TagTone::Danger),
                 };
-                let copy_hash = hash.clone();
-                let copy_button = (copy_hash.is_some()).then(|| {
-                    let value = copy_hash.clone().unwrap_or_default();
-                    design::icon_action(
-                        &palette,
-                        format!("hashbatch-copy-{index}"),
-                        IconName::Copy,
-                        palette.sub,
-                        false,
-                        "复制哈希",
-                        cx.listener(move |this, _, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-                            this.show_toast("已复制哈希", ToastKind::Info, cx);
-                        }),
-                    )
-                });
+                let error = result.as_ref().and_then(|item| item.error.clone());
+                let hashes = result
+                    .as_ref()
+                    .map(|item| item.hashes.clone())
+                    .unwrap_or_default();
+                let file_name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                let secondary = error.clone().unwrap_or_else(|| path.display().to_string());
+                let secondary_color = if error.is_some() {
+                    palette.bad
+                } else {
+                    palette.muted
+                };
+                let expected_for_file = expected_hash_for(&path, &expected);
                 let remove_path = path.clone();
-                let remove_button = (!running).then(|| {
+                let remove = (!running).then(|| {
                     design::icon_action(
                         &palette,
                         format!("hashbatch-remove-{index}"),
@@ -2137,183 +2401,189 @@ impl MainView {
                         }),
                     )
                 });
-                table = table.child(
-                    div()
-                        .id(format!("hashbatch-row-{index}"))
-                        .flex()
-                        .items_center()
-                        .h(px(44.0))
-                        .px(px(16.0))
-                        .when(!is_last, |this| {
-                            this.border_b_1().border_color(palette.line)
+
+                let mut row = div()
+                    .id(format!("hashbatch-row-{index}"))
+                    .flex()
+                    .items_center()
+                    .h(px(48.0))
+                    .px(px(14.0))
+                    .when(index + 1 < count, |this| {
+                        this.border_b_1().border_color(palette.line)
+                    })
+                    .hover(|style| style.bg(palette.accent_softer))
+                    .child(
+                        div()
+                            .w(px(file_width))
+                            .flex_shrink_0()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(icon(IconName::FileText, palette.muted, 15.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_size(crate::theme::caption())
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(palette.text)
+                                            .child(file_name),
+                                    )
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_size(crate::theme::caption())
+                                            .text_color(secondary_color)
+                                            .child(secondary),
+                                    ),
+                            ),
+                    );
+                for algorithm in &algorithms {
+                    let hash = hashes
+                        .iter()
+                        .find(|(candidate, _)| candidate == algorithm)
+                        .map(|(_, hash)| hash.clone());
+                    let copy_value = hash.clone();
+                    let label = algorithm.label();
+                    let cell_color =
+                        hash.as_ref()
+                            .map_or(palette.muted, |value| match expected_for_file {
+                                Some(want) if value.eq_ignore_ascii_case(want) => {
+                                    if matches!(algorithm, HashAlgorithm::Md5 | HashAlgorithm::Sha1)
+                                    {
+                                        palette.warn
+                                    } else {
+                                        palette.ok
+                                    }
+                                }
+                                _ => palette.sub,
+                            });
+                    let cell = div()
+                        .id(format!("hash-cell-{index}-{}", algorithm.name()))
+                        .role(Role::Button)
+                        .aria_label(format!("复制 {label} 哈希"))
+                        .flex_1()
+                        .min_w_0()
+                        .px(px(6.0))
+                        .text_size(crate::theme::caption())
+                        .text_color(cell_color)
+                        .when_some(copy_value, |this, value| {
+                            this.cursor_pointer()
+                                .hover(|style| style.text_color(palette.accent))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
+                                    this.show_toast(format!("已复制 {label}"), ToastKind::Info, cx);
+                                }))
                         })
-                        .hover(|style| style.bg(palette.accent_softer))
                         .child(
                             div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(icon(IconName::FileText, palette.muted, 15.0))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(crate::theme::caption())
-                                        .text_color(palette.text)
-                                        .child(path.display().to_string()),
-                                ),
-                        )
-                        .child(div().w(px(380.0)).flex_shrink_0().child(hash_text))
-                        .child(
-                            div()
-                                .w(px(86.0))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .child(status_tag),
-                        )
-                        .child(
-                            div()
-                                .w(px(76.0))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .justify_end()
-                                .gap(px(2.0))
-                                .when_some(copy_button, |this, button| this.child(button))
-                                .when_some(remove_button, |this, button| this.child(button)),
-                        ),
-                );
-            }
-
-            let table_card = design::card(&palette)
-                .w_full()
-                .overflow_hidden()
-                .child(table);
-            body.push(toolbar.into_any_element());
-            body.push(table_card.into_any_element());
-
-            if running {
-                let (done, total) = self.hash_batch_progress;
-                let percent = if total == 0 {
-                    0.0
-                } else {
-                    done as f32 / total as f32 * 100.0
-                };
-                body.push(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .text_size(crate::theme::caption())
-                                .text_color(palette.accent)
-                                .child(format!("正在计算：{done} / {total}")),
-                        )
-                        .child(progress_bar(percent, &palette, palette.accent))
-                        .into_any_element(),
-                );
-            }
-
-            if expected_present && !self.hash_batch_results.is_empty() {
-                let mut matched = 0usize;
-                let mut mismatched = 0usize;
-                let mut unchecked = 0usize;
-                for item in &self.hash_batch_results {
-                    if item.error.is_some() {
-                        continue;
-                    }
-                    match nimzip_engine::compare_hash(
-                        &item.path,
-                        &item.hash,
-                        &self.hash_batch_expected,
-                    ) {
-                        Some(true) => matched += 1,
-                        Some(false) => mismatched += 1,
-                        None => unchecked += 1,
-                    }
+                                .truncate()
+                                .font_family("Cascadia Mono")
+                                .child(hash.unwrap_or_else(|| "—".to_string())),
+                        );
+                    row = row.child(cell);
                 }
-                body.push(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(design::pill(
-                            &palette,
-                            format!("匹配 {matched}"),
-                            design::TagTone::Ok,
-                        ))
-                        .child(design::pill(
-                            &palette,
-                            format!("不匹配 {mismatched}"),
-                            design::TagTone::Danger,
-                        ))
-                        .child(design::pill(
-                            &palette,
-                            format!("未校验 {unchecked}"),
-                            design::TagTone::Neutral,
-                        ))
-                        .into_any_element(),
-                );
+                row = row
+                    .child(
+                        div()
+                            .w(px(72.0))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .child(design::tag(&palette, status_label, status_tone)),
+                    )
+                    .child(
+                        div()
+                            .w(px(40.0))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .when_some(remove, |this, remove| this.child(remove)),
+                    );
+                table = table.child(row);
             }
+
+            body.push(toolbar.into_any_element());
+            body.push(
+                design::card(&palette)
+                    .w_full()
+                    .overflow_hidden()
+                    .child(table)
+                    .into_any_element(),
+            );
         }
 
-        let has_results = !self.hash_batch_results.is_empty();
-        let copy_all = Button::new("hashbatch-copy")
-            .label("复制全部")
-            .icon(icon(IconName::Copy, palette.text, 15.0))
+        let export_format = self.hash_export_format;
+        let mut format_row = div().flex().items_center().gap(px(4.0)).child(
+            div()
+                .text_size(crate::theme::caption())
+                .text_color(palette.muted)
+                .child("导出格式"),
+        );
+        for format in HashExportFormat::ALL {
+            let selected = format == export_format;
+            format_row = format_row.child(
+                div()
+                    .id(format!("hash-format-{}", format.extension()))
+                    .role(Role::Button)
+                    .aria_label(format.label())
+                    .h(px(26.0))
+                    .px(px(7.0))
+                    .rounded(px(5.0))
+                    .bg(if selected {
+                        palette.accent_soft
+                    } else {
+                        palette.bg
+                    })
+                    .text_size(crate::theme::caption())
+                    .text_color(if selected {
+                        palette.accent
+                    } else {
+                        palette.sub
+                    })
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.hash_export_format = format;
+                        cx.notify();
+                    }))
+                    .child(format.label()),
+            );
+        }
+
+        let export_text = hash_export_contents(&self.hash_batch_results, export_format);
+        let export_value = export_text.clone();
+        let export = Button::new("hash-export")
+            .label("导出…")
+            .icon(icon(IconName::Download, palette.text, 14.0))
             .outline()
-            .h(px(crate::components::CONTROL_HEIGHT))
-            .px(px(16.0))
-            .text_size(crate::theme::body())
-            .disabled(!has_results)
-            .opacity(if has_results { 1.0 } else { 0.45 })
-            .on_click(cx.listener(|this, _, _, cx| {
-                let text = this
-                    .hash_batch_results
-                    .iter()
-                    .filter(|item| item.error.is_none())
-                    .map(|item| format!("{}  {}", item.hash, item.path.display()))
-                    .collect::<Vec<_>>()
-                    .join("\r\n");
-                if !text.is_empty() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    this.show_toast("哈希结果已复制", ToastKind::Success, cx);
-                }
-            }));
-        let save_file = Button::new("hashbatch-save")
-            .label("保存校验文件…")
-            .icon(icon(IconName::Save, palette.text, 15.0))
-            .outline()
-            .h(px(crate::components::CONTROL_HEIGHT))
-            .px(px(16.0))
-            .text_size(crate::theme::body())
-            .disabled(!has_results)
-            .opacity(if has_results { 1.0 } else { 0.45 })
-            .on_click(cx.listener(|this, _, window, cx| {
-                let entries: Vec<(String, PathBuf)> = this
-                    .hash_batch_results
-                    .iter()
-                    .filter(|item| item.error.is_none())
-                    .map(|item| (item.hash.clone(), item.path.clone()))
-                    .collect();
-                if entries.is_empty() {
-                    this.show_toast("没有可保存的哈希结果", ToastKind::Info, cx);
+            .h(px(32.0))
+            .px(px(12.0))
+            .text_size(crate::theme::caption())
+            .disabled(export_text.is_empty())
+            .opacity(if export_text.is_empty() { 0.45 } else { 1.0 })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if export_value.is_empty() {
+                    this.show_toast("没有可导出的哈希", ToastKind::Info, cx);
                     return;
                 }
-                let Some(path) = crate::components::file_dialog_in(window, || {
+                let extension = this.hash_export_format.extension();
+                let Some(path) = crate::components::file_dialog_in(window, move || {
                     rfd::FileDialog::new()
-                        .add_filter("校验文件", &["sha256", "sha1", "md5", "sha512", "txt"])
-                        .set_file_name("checksums.txt")
+                        .add_filter("校验文件", &[extension])
+                        .set_file_name(format!("checksums.{extension}"))
                         .save_file()
                 }) else {
                     return;
                 };
-                match nimzip_engine::save_checksum_file(&path, &entries) {
+                match std::fs::write(&path, &export_value) {
                     Ok(()) => this.show_toast(
                         format!("校验文件已保存：{}", path.display()),
                         ToastKind::Success,
@@ -2324,28 +2594,35 @@ impl MainView {
                     }
                 }
             }));
-        let start = Button::new("hashbatch-start")
-            .label(if running {
-                "计算中…"
-            } else {
-                "开始计算"
-            })
-            .icon(icon(IconName::Play, palette.accent_text, 15.0))
-            .primary()
-            .h(px(crate::components::CONTROL_HEIGHT))
-            .px(px(16.0))
-            .text_size(crate::theme::body())
-            .disabled(running || count == 0)
-            .opacity(if running || count == 0 { 0.45 } else { 1.0 })
-            .on_click(cx.listener(|this, _, _, cx| this.start_hash_batch(cx)));
+        let copy_value = export_text;
+        let copy_all = Button::new("hash-copy-all")
+            .label("复制全部")
+            .icon(icon(IconName::Copy, palette.text, 14.0))
+            .outline()
+            .h(px(32.0))
+            .px(px(12.0))
+            .text_size(crate::theme::caption())
+            .disabled(copy_value.is_empty())
+            .opacity(if copy_value.is_empty() { 0.45 } else { 1.0 })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if copy_value.is_empty() {
+                    this.show_toast("没有可复制的哈希", ToastKind::Info, cx);
+                    return;
+                }
+                cx.write_to_clipboard(ClipboardItem::new_string(copy_value.clone()));
+                this.show_toast("哈希结果已复制", ToastKind::Success, cx);
+            }));
 
-        let actions = design::page_actions(vec![
-            copy_all.into_any_element(),
-            save_file.into_any_element(),
-            start.into_any_element(),
-        ]);
-
-        design::page_shell_bare(&palette, body, Some(actions))
+        let footer = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(format_row)
+            .child(div().flex_1())
+            .child(copy_all)
+            .child(export)
+            .into_any_element();
+        design::page_shell_bare(&palette, body, Some(footer))
     }
 
     pub(in crate::app) fn render_new_archive_page(

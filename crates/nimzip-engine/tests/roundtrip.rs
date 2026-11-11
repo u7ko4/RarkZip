@@ -3,10 +3,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use nimzip_engine::{
-    create_archive, extract_archive, hash_bytes, open_archive, smart_target, test_password,
-    verify_archive, ArchiveFormat, CreateOptions, ExtractMode, ExtractOptions, HashAlgorithm,
-    NoopSink, OpenOptions, PasswordBook, RecoveryControl, RecoveryMode, RecoveryOptions,
-    ZipAlgorithm,
+    create_archive, extract_archive, hash_bytes, hash_file_many, open_archive, smart_target,
+    test_password, verify_archive, ArchiveFormat, CreateOptions, ExtractMode, ExtractOptions,
+    HashAlgorithm, NoopSink, OpenOptions, PasswordBook, RecoveryControl, RecoveryMode,
+    RecoveryOptions, ZipAlgorithm,
 };
 use tempfile::TempDir;
 
@@ -526,6 +526,24 @@ fn hash_known_vectors() {
     );
     assert_eq!(hash_bytes(HashAlgorithm::Crc32, b"123456789"), "cbf43926");
     assert_eq!(hash_bytes(HashAlgorithm::Blake3, b"").len(), 64);
+}
+
+#[test]
+fn multi_hash_file_matches_single_hash_results() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("payload.bin");
+    write(&file, b"abc");
+    let algorithms = [
+        HashAlgorithm::Sha256,
+        HashAlgorithm::Sha1,
+        HashAlgorithm::Md5,
+        HashAlgorithm::Crc32,
+    ];
+    let hashes = hash_file_many(&algorithms, &file, &NoopSink).unwrap();
+    assert_eq!(hashes.len(), algorithms.len());
+    for (algorithm, hash) in hashes {
+        assert_eq!(hash, hash_bytes(algorithm, b"abc"));
+    }
 }
 
 #[test]

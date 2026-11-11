@@ -16,10 +16,10 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use nimzip_engine::{
-    format_size, hash_file_with_progress, open_archive, ArchiveFormat, ArchiveInfo, Codepage,
-    CreateOutcome, EngineError, ExtractMode, ExtractOptions, HashAlgorithm, OpenOptions,
-    PasswordBook, RecoveryControl, RecoveryMode, RecoveryOptions, RecoveryOutcome, Settings,
-    ZipAlgorithm,
+    checksum_expectations, format_size, hash_file_many, hash_file_with_progress, open_archive,
+    parse_checksum_text, ArchiveFormat, ArchiveInfo, Codepage, CreateOutcome, EngineError,
+    ExtractMode, ExtractOptions, HashAlgorithm, OpenOptions, PasswordBook, RecoveryControl,
+    RecoveryMode, RecoveryOptions, RecoveryOutcome, Settings, ZipAlgorithm,
 };
 
 use crate::components::*;
@@ -92,7 +92,7 @@ impl FeatureWindow {
         match self {
             Self::NewArchive => (980.0, 580.0),
             Self::PasswordRecovery => (720.0, 620.0),
-            Self::Hash => (820.0, 480.0),
+            Self::Hash => (980.0, 480.0),
         }
     }
 
@@ -357,8 +357,54 @@ enum RecoveryUiMode {
 #[derive(Debug, Clone)]
 struct HashBatchItem {
     path: PathBuf,
-    hash: String,
+    hashes: Vec<(HashAlgorithm, String)>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HashExportFormat {
+    Sha256Sum,
+    Md5Sum,
+    Sfv,
+}
+
+impl HashExportFormat {
+    const ALL: [Self; 3] = [Self::Sha256Sum, Self::Md5Sum, Self::Sfv];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Sha256Sum => "SHA256SUM",
+            Self::Md5Sum => "MD5SUM",
+            Self::Sfv => "SFV",
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Sha256Sum => "sha256",
+            Self::Md5Sum => "md5",
+            Self::Sfv => "sfv",
+        }
+    }
+}
+
+fn hash_expectations_from_text(text: &str) -> HashMap<String, String> {
+    let entries = parse_checksum_text(text);
+    if !entries.is_empty() {
+        return checksum_expectations(&entries);
+    }
+    let compact: String = text
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != ':' && *ch != '-')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let valid_length = matches!(compact.len(), 8 | 16 | 32 | 40 | 64 | 128);
+    if valid_length && compact.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        HashMap::from([("*".to_string(), compact)])
+    } else {
+        HashMap::new()
+    }
 }
 
 #[derive(Debug)]
@@ -490,12 +536,14 @@ pub struct MainView {
     rename_input: Entity<InputState>,
     comment_input: Entity<InputState>,
     hash_batch_paths: Vec<PathBuf>,
-    hash_batch_algorithm: HashAlgorithm,
+    hash_batch_algorithms: Vec<HashAlgorithm>,
     hash_batch_results: Vec<HashBatchItem>,
     hash_batch_running: bool,
     hash_batch_progress: (usize, usize),
     hash_batch_error: Option<String>,
     hash_batch_expected: HashMap<String, String>,
+    hash_verify_input: Entity<InputState>,
+    hash_export_format: HashExportFormat,
     hash_batch_run_id: u64,
     hash_batch_sender: Sender<HashBatchEvent>,
     hash_batch_receiver: Receiver<HashBatchEvent>,
@@ -640,6 +688,10 @@ impl MainView {
         });
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新条目路径"));
         let comment_input = cx.new(|cx| InputState::new(window, cx).placeholder("压缩包注释"));
+        let hash_verify_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("粘贴期望的哈希值或校验和文件内容，自动匹配下方结果")
+        });
 
         let (task_sender, task_receiver) = unbounded();
         let (recovery_sender, recovery_receiver) = unbounded();
@@ -735,12 +787,19 @@ impl MainView {
             rename_input,
             comment_input,
             hash_batch_paths: Vec::new(),
-            hash_batch_algorithm: HashAlgorithm::Sha256,
+            hash_batch_algorithms: vec![
+                HashAlgorithm::Sha256,
+                HashAlgorithm::Sha1,
+                HashAlgorithm::Md5,
+                HashAlgorithm::Crc32,
+            ],
             hash_batch_results: Vec::new(),
             hash_batch_running: false,
             hash_batch_progress: (0, 0),
             hash_batch_error: None,
             hash_batch_expected: HashMap::new(),
+            hash_verify_input,
+            hash_export_format: HashExportFormat::Sha256Sum,
             hash_batch_run_id: 0,
             hash_batch_sender,
             hash_batch_receiver,
@@ -785,6 +844,18 @@ impl MainView {
                     this.settings.compression.exclude =
                         this.settings_exclude_input.read(cx).value().to_string();
                     this.save_settings();
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &view.hash_verify_input,
+            |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let text = this.hash_verify_input.read(cx).value().to_string();
+                    this.hash_batch_expected = hash_expectations_from_text(&text);
+                    cx.notify();
                 }
             },
         )
