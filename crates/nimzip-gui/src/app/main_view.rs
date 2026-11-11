@@ -216,6 +216,8 @@ impl MainView {
             "列表",
             IconName::List,
             FileViewMode::List,
+            true,
+            false,
             cx,
         );
         let icons_segment = self.file_view_segment(
@@ -223,6 +225,8 @@ impl MainView {
             "图标",
             IconName::LayoutGrid,
             FileViewMode::Icons,
+            false,
+            true,
             cx,
         );
         let segments = div()
@@ -342,6 +346,8 @@ impl MainView {
         label: &'static str,
         icon_name: IconName,
         mode: FileViewMode,
+        round_left: bool,
+        round_right: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
@@ -355,6 +361,12 @@ impl MainView {
             .flex()
             .items_center()
             .justify_center()
+            .when(round_left, |this| {
+                this.rounded_tl(px(8.0)).rounded_bl(px(8.0))
+            })
+            .when(round_right, |this| {
+                this.rounded_tr(px(8.0)).rounded_br(px(8.0))
+            })
             .text_size(crate::theme::font_px(12.5))
             .cursor_pointer()
             .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
