@@ -98,7 +98,11 @@ fn hash_export_contents(items: &[HashBatchItem], format: HashExportFormat) -> St
         } else {
             hash.clone()
         };
-        lines.push(format!("{hash}  {name}"));
+        if format == HashExportFormat::Sfv {
+            lines.push(format!("{name}  {hash}"));
+        } else {
+            lines.push(format!("{hash}  {name}"));
+        }
     }
     lines.join(
         "
