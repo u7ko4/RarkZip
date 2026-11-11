@@ -544,6 +544,23 @@ fn password_book_roundtrip() {
 }
 
 #[test]
+fn smart_extract_single_empty_root_folder_stays_in_current_dir() {
+    let temp = TempDir::new().unwrap();
+    let archive = temp.path().join("empty-folder.zip");
+    let file = File::create(&archive).unwrap();
+    let mut writer = zip::ZipWriter::new(file);
+    writer
+        .add_directory("root/", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    writer.finish().unwrap();
+
+    let result = extract_archive(&archive, &ExtractOptions::default(), &NoopSink).unwrap();
+    assert_eq!(result.dest, temp.path());
+    assert!(temp.path().join("root").is_dir());
+    assert!(!temp.path().join("empty-folder").exists());
+}
+
+#[test]
 fn smart_extract_multiple_roots_uses_archive_folder() {
     let temp = TempDir::new().unwrap();
     let first = temp.path().join("first.txt");

@@ -120,15 +120,12 @@ pub fn smart_target(path: &Path, info: &ArchiveInfo) -> SmartTarget {
 
 fn single_root(info: &ArchiveInfo) -> Option<String> {
     let mut root: Option<String> = None;
-    let mut has_nested = false;
     for entry in &info.entries {
         if entry.path.is_empty() {
             continue;
         }
         let first = entry.path.split('/').next()?.to_string();
-        if entry.path.contains('/') {
-            has_nested = true;
-        } else if !entry.is_dir {
+        if !entry.path.contains('/') && !entry.is_dir {
             // 顶层文件说明不是“单一根文件夹”。
             return None;
         }
@@ -138,11 +135,7 @@ fn single_root(info: &ArchiveInfo) -> Option<String> {
             _ => {}
         }
     }
-    if has_nested {
-        root
-    } else {
-        None
-    }
+    root
 }
 
 pub fn extract_archive(
