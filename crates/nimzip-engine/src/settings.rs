@@ -239,7 +239,7 @@ pub struct IntegrationSettings {
     /// 是否已把“压缩为独立的 ZIP/7Z”加入旧版压缩动作列表。
     #[serde(default)]
     pub each_compress_defaulted: bool,
-    /// 是否已把右键菜单默认项对齐 Bandizip 的精简集合。
+    /// 是否已把右键菜单默认项收敛为常用集合。
     #[serde(default)]
     pub menu_aligned: bool,
     /// 目录空白处右键菜单动作 key。
@@ -438,7 +438,7 @@ impl Settings {
             self.ui.quick_sizes_defaulted = true;
         }
         if !self.integration.menu_aligned {
-            // 把旧版默认集合一次性收敛为 Bandizip 风格的常用动作；用户自定义过的
+            // 把旧版默认集合一次性收敛为常用动作；用户自定义过的
             // 列表保持不变。
             const PREV_EXTRACT: [&str; 8] = [
                 "open",
@@ -636,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_previous_eight_verb_default_to_bandizip_set() {
+    fn migrates_previous_eight_verb_default_to_common_set() {
         let mut settings = Settings::default();
         settings.integration.extract_verbs = [
             "open",

@@ -82,10 +82,10 @@ pub struct SmartTarget {
     pub reason: String,
 }
 
-/// 智能解压目标决策（2.3.1）：
+/// 智能解压目标决策：
 /// 1. 单个文件 → 当前目录；
-/// 2. 单个根文件夹 → 当前目录并剥掉根；
-/// 3. 常规 → 与压缩包同名的文件夹。
+/// 2. 单个根文件夹 → 当前目录，保留该根文件夹；
+/// 3. 其他结构 → 与压缩包同名的文件夹。
 pub fn smart_target(path: &Path, info: &ArchiveInfo) -> SmartTarget {
     let parent = path
         .parent()
@@ -102,11 +102,11 @@ pub fn smart_target(path: &Path, info: &ArchiveInfo) -> SmartTarget {
         };
     }
 
-    if let Some(root) = single_root(info) {
+    if single_root(info).is_some() {
         return SmartTarget {
             dest: parent,
-            strip_prefix: Some(root),
-            reason: "单根文件夹：直接释放内容".to_string(),
+            strip_prefix: None,
+            reason: "单根文件夹：解压到当前目录并保留根文件夹".to_string(),
         };
     }
 

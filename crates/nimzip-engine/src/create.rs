@@ -1029,7 +1029,7 @@ fn create_7z(
 ) -> Result<()> {
     let mut writer = sevenz_rust2::ArchiveWriter::create(to_extended(dest))
         .map_err(|error| EngineError::Other(format!("创建 7z 失败：{error:?}")))?;
-    // sevenz-rust2 默认单线程 LZMA2，与 Bandizip 的多线程差距明显。
+    // sevenz-rust2 默认单线程 LZMA2，启用多线程可明显提升大归档压缩速度。
     // 按 CPU 数启用多线程分块压缩；块大小取 16 MiB（会被字典大小下限钳制）。
     let threads = std::thread::available_parallelism()
         .map(|value| value.get() as u32)

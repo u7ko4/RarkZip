@@ -2166,7 +2166,7 @@ const DOUBLE_CLICK_OPTIONS: &[(&str, &str, &str)] = &[
     ("custom", "智能解压到指定文件夹", "总是解压到下面指定的位置"),
 ];
 
-// 顺序与 Bandizip 右键菜单一致：解压到此处 → 删除 → 智能解压 → 删除 →
+// 菜单顺序：解压到此处 → 删除 → 智能解压 → 删除 →
 // 独立文件夹 → 删除 → 其他文件夹 → 管理员 → 测试 → 打开 → 预览。
 const EXTRACT_MENU_OPTIONS: &[(&str, &str)] = &[
     ("here", "解压到此处(&E)"),
@@ -2183,7 +2183,7 @@ const EXTRACT_MENU_OPTIONS: &[(&str, &str)] = &[
     ("hash", "计算 SHA-256 哈希"),
 ];
 
-// 顺序与 Bandizip 一致：ZIP → 删除 → TAR/TGZ → 7Z → GZ/XZ/ZST →
+// 菜单顺序：ZIP → 删除 → TAR/TGZ → 7Z → GZ/XZ/ZST →
 // 逐项压缩 → 新建压缩包 → 管理员压缩。
 const COMPRESS_MENU_OPTIONS: &[(&str, &str)] = &[
     ("zip", "压缩为“文件名.zip”"),

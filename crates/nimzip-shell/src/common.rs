@@ -232,7 +232,7 @@ pub(crate) const VERB_BACKGROUND_NEW: VerbSpec = VerbSpec {
     multi_select: None,
 };
 
-// 顺序对齐 Bandizip：打开 → 智能解压 → 同名文件夹 → 解压到此处 →
+// 菜单顺序：打开 → 智能解压 → 同名文件夹 → 解压到此处 →
 // 其他文件夹 → 删除系列 → 管理员解压 → 测试 → 预览。资源管理器实际
 // 按注册表子键字典序显示，因此各动词 key 使用数字前缀固定该顺序。
 const EXTRACT_VERBS: &[(&str, &VerbSpec)] = &[

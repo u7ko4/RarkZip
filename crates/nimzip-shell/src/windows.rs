@@ -97,7 +97,7 @@ fn install_in(classes: &RegKey, options: &ShellOptions, com_menu: bool) -> Resul
         )?;
     }
 
-    // 空白处菜单保持静态：Bandizip 同样只在背景菜单提供独立命令。
+    // 空白处菜单保持静态，只在背景菜单提供独立命令。
     let (background_shell, _) = classes
         .create_subkey(DIRECTORY_BACKGROUND_SHELL_PATH)
         .with_context(|| format!("无法创建注册表项：{DIRECTORY_BACKGROUND_SHELL_PATH}"))?;

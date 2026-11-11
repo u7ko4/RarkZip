@@ -62,17 +62,21 @@ fn create_list_extract_zip() {
         .any(|entry| entry.is_dir && entry.path == "photos"));
 
     let target = smart_target(&archive, &info);
-    assert_eq!(target.strip_prefix.as_deref(), Some("photos"));
+    assert!(target.strip_prefix.is_none());
 
     let result = extract_archive(&archive, &ExtractOptions::default(), &NoopSink).unwrap();
     assert_eq!(result.files, 3);
     assert!(result.nested_archives == 0);
     assert_eq!(
-        fs::read(temp.path().join("archives/README.txt")).unwrap(),
+        fs::read(temp.path().join("archives/photos/README.txt")).unwrap(),
         b"NimZip sample archive"
     );
     assert_eq!(
-        fs::read(temp.path().join("archives/2026/01 冬季/IMG_1042.jpg")).unwrap(),
+        fs::read(
+            temp.path()
+                .join("archives/photos/2026/01 冬季/IMG_1042.jpg")
+        )
+        .unwrap(),
         b"jpeg-one"
     );
 
@@ -537,6 +541,34 @@ fn password_book_roundtrip() {
     assert_eq!(loaded.len(), 2);
     assert_eq!(loaded.entries()[0].password, "first-pass");
     assert_eq!(loaded.entries()[1].password, "second-pass");
+}
+
+#[test]
+fn smart_extract_multiple_roots_uses_archive_folder() {
+    let temp = TempDir::new().unwrap();
+    let first = temp.path().join("first.txt");
+    let second = temp.path().join("second.txt");
+    write(&first, b"first");
+    write(&second, b"second");
+    let archive = temp.path().join("multi.zip");
+    create_archive(
+        &[first, second],
+        &archive,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+
+    let result = extract_archive(&archive, &ExtractOptions::default(), &NoopSink).unwrap();
+    assert_eq!(result.files, 2);
+    assert_eq!(
+        fs::read(temp.path().join("multi/first.txt")).unwrap(),
+        b"first"
+    );
+    assert_eq!(
+        fs::read(temp.path().join("multi/second.txt")).unwrap(),
+        b"second"
+    );
 }
 
 #[test]

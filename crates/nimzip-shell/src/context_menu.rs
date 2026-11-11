@@ -3,7 +3,7 @@
 //! 静态注册表菜单只能按右键点中的单个对象判断类型；多选混合选择时无法知道
 //! 整个选择。这里用 COM 处理器只在 **多选（≥2 项）** 时接管菜单：
 //! - 全部为压缩包：显示解压组；
-//! - 含普通文件/文件夹：显示压缩组，并按 Bandizip 的方式生成动态名称。
+//! - 含普通文件/文件夹：显示压缩组，并生成动态名称。
 //!
 //! 单选仍由静态注册表菜单处理，避免重复。
 
@@ -154,7 +154,7 @@ mod imp {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    /// 选中项的基准名：单选用文件/文件夹名，多选用所在文件夹名（与 Bandizip 一致）。
+    /// 选中项的基准名：单选用文件/文件夹名，多选用所在文件夹名。
     fn archive_base(paths: &[PathBuf]) -> String {
         let Some(first) = paths.first() else {
             return "archive".to_string();
@@ -175,7 +175,7 @@ mod imp {
             .unwrap_or_else(|| "archive".to_string())
     }
 
-    /// 返回不冲突的目标文件名，已有同名文件时按 Bandizip 追加 " (2)"、" (3)"。
+    /// 返回不冲突的目标文件名，已有同名文件时追加 " (2)"、" (3)"。
     fn unique_target(dir: &Path, base: &str, extension: &str) -> String {
         let mut index = 1;
         loop {
@@ -233,7 +233,7 @@ mod imp {
                 "解压到独立文件夹并删除".to_string(),
             )
         };
-        // 多选时智能解压也要落到各自独立文件夹，与 Bandizip 文案/行为一致。
+        // 多选时智能解压落到各自独立文件夹。
         let smart_flag = if single {
             "--extract-smart"
         } else {
@@ -444,7 +444,7 @@ mod imp {
         let all_archives = paths.iter().all(|path| is_archive(path, settings));
         if all_archives {
             push_extract_actions(paths, settings, &mut labels, &mut actions);
-            // Bandizip 在多选压缩包时也追加压缩动作；单选压缩包只显示解压动作。
+            // 多选压缩包时追加压缩动作；单选压缩包只显示解压动作。
             if paths.len() > 1 {
                 push_compress_actions(paths, settings, &mut labels, &mut actions);
             }
@@ -882,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn single_archive_menu_matches_bandizip_order() {
+    fn single_archive_menu_order() {
         let dir = temp_dir("single-archive");
         let archive = dir.join("a.zip");
         let _ = std::fs::write(&archive, b"a");

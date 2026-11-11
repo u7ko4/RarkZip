@@ -769,7 +769,7 @@ impl QuickView {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        // 单选时用文件/文件夹名；多选合并压缩时用所在文件夹名（对齐 Bandizip）。
+        // 单选时用文件/文件夹名；多选合并压缩时用所在文件夹名。
         let stem = if sources.len() == 1 {
             let single_stream = format.is_single_stream() && first.is_file();
             let value = if single_stream {
