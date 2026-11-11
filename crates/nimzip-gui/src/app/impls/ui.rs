@@ -48,8 +48,8 @@ impl MainView {
                 self.theme_mode = ThemeMode::from_setting(&self.settings.view.theme);
                 let dark = self.theme_mode.is_dark(window.appearance());
                 self.skin = Skin::from_setting(&self.settings.view.theme_skin);
-                theme::apply(cx, dark, self.skin, self.settings.view.mica);
-                self.palette = Palette::for_theme(dark, self.skin, self.settings.view.mica);
+                theme::apply(cx, dark, self.skin);
+                self.palette = Palette::for_skin(dark, self.skin);
                 self.settings_page = SettingsPage::ALL
                     .get(self.settings.ui.settings_page)
                     .copied()

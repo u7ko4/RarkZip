@@ -43,36 +43,20 @@ impl MainView {
                     .aria_label(item.label(self.language))
                     .h(px(36.0))
                     .px(px(14.0))
-                    .rounded(px(if palette.mica { 4.0 } else { 9.0 }))
+                    .rounded(px(9.0))
                     .relative()
                     .flex()
                     .items_center()
                     .gap(px(10.0))
                     .cursor_pointer()
                     .text_size(crate::theme::font_px(13.5))
-                    .font_weight(if selected && !palette.mica {
+                    .font_weight(if selected {
                         FontWeight::SEMIBOLD
                     } else {
                         FontWeight::NORMAL
                     })
                     .when(selected, |this| {
-                        if palette.mica {
-                            this.bg(palette.hover).text_color(palette.text)
-                        } else {
-                            this.bg(palette.accent_soft).text_color(palette.accent)
-                        }
-                    })
-                    .when(selected && palette.mica, |this| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .left(px(2.0))
-                                .top(px(10.0))
-                                .w(px(3.0))
-                                .h(px(16.0))
-                                .rounded(px(2.0))
-                                .bg(palette.accent),
-                        )
+                        this.bg(palette.accent_soft).text_color(palette.accent)
                     })
                     .when(!selected, |this| {
                         this.text_color(palette.sub)
@@ -542,7 +526,6 @@ impl MainView {
         let tree = self.settings.view.show_tree;
         let comment = self.settings.view.show_comment;
         let status = self.settings.view.show_status;
-        let mica = self.settings.view.mica;
         let theme_mode = ThemeMode::from_setting(&self.settings.view.theme);
         let icon_size = self.settings.view.toolbar_icon_size.clamp(14.0, 24.0);
         let bar_height = self.settings.view.toolbar_height.clamp(40.0, 64.0);
@@ -677,34 +660,9 @@ impl MainView {
             .into_any_element();
 
         let custom_titlebar = self.settings.view.use_custom_titlebar;
-        let mica_entity = cx.entity();
         let toggles = design::setting_card(&palette)
             .flex()
             .flex_col()
-            .child(design::option_row(
-                &palette,
-                false,
-                design::check_box(
-                    &palette,
-                    "settings-mica",
-                    mica,
-                    false,
-                    crate::i18n::tr(self.language, "Mica 主题"),
-                    move |_, _, app| {
-                        let next = !mica;
-                        if next {
-                            crate::mica::refresh_wallpaper_tint();
-                        }
-                        mica_entity.update(app, |this, cx| {
-                            this.settings.view.mica = next;
-                            this.reapply_theme(cx);
-                        });
-                    },
-                ),
-                crate::i18n::tr(self.language, "Mica 主题"),
-                "WinUI Gallery 风格 Mica 材质：壁纸色调底色、WinUI 圆角/强调色；浅色/深色跟随当前主题",
-                None,
-            ))
             .child(design::option_row(
                 &palette,
                 false,
@@ -2187,7 +2145,7 @@ impl MainView {
         let size = size.clamp(11.0, 17.0);
         self.settings.view.font_size = size;
         crate::theme::set_ui_font_size(size);
-        crate::theme::apply(cx, self.palette.dark, self.skin, self.settings.view.mica);
+        crate::theme::apply(cx, self.palette.dark, self.skin);
         self.save_settings();
         cx.notify();
     }

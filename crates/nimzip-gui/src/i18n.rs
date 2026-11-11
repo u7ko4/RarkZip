@@ -222,7 +222,6 @@ fn en(zh: &'static str) -> &'static str {
         "工具栏图标大小" => "Toolbar icon size",
         "工具栏高度" => "Toolbar height",
         "界面字号" => "UI font size",
-        "Mica 主题" => "Mica theme",
         "跟随系统" => "System",
         "浅色" => "Light",
         "暗色" => "Dark",

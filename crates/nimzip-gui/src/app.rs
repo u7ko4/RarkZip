@@ -578,9 +578,8 @@ impl MainView {
         let skin = Skin::from_setting(&settings.view.theme_skin);
         let dark = theme_mode.is_dark(window.appearance());
         theme::set_ui_font_size(settings.view.font_size);
-        theme::apply(cx, dark, skin, settings.view.mica);
-        crate::mica::apply_titlebar(window, dark);
-        let palette = Palette::for_theme(dark, skin, settings.view.mica);
+        theme::apply(cx, dark, skin);
+        let palette = Palette::for_skin(dark, skin);
         let language = Language::from_setting(&settings.general.language);
 
         let search = cx.new(|cx| {
@@ -641,8 +640,7 @@ impl MainView {
         let (preview_sender, preview_receiver) = unbounded();
         let (open_sender, open_receiver) = unbounded();
         let focus_handle = cx.focus_handle();
-        let custom_titlebar =
-            settings.view.use_custom_titlebar && !(settings.view.mica && feature_window.is_some());
+        let custom_titlebar = settings.view.use_custom_titlebar;
         let file_view = FileViewMode::from_setting(&settings.view.file_list_view);
         let settings_page = SettingsPage::ALL
             .get(settings.ui.settings_page)
@@ -1712,11 +1710,7 @@ impl MainView {
         });
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
-            window_background: if self.settings.view.mica {
-                WindowBackgroundAppearance::Blurred
-            } else {
-                WindowBackgroundAppearance::Opaque
-            },
+            window_background: WindowBackgroundAppearance::Opaque,
             titlebar: Some(TitlebarOptions {
                 title: Some("NimZip".into()),
                 appears_transparent: custom_titlebar,
@@ -1744,16 +1738,11 @@ impl MainView {
         let persisted = Settings::load();
         self.settings.ui.window_sizes = persisted.ui.window_sizes.clone();
         let (width, height) = persisted.window_size(feature.key(), feature.size());
-        // Mica 下功能窗口改用系统标题栏，让 Mica 背景与原生 chrome 保持一致。
-        let custom_titlebar = self.settings.view.use_custom_titlebar && !self.settings.view.mica;
+        let custom_titlebar = self.settings.view.use_custom_titlebar;
         let bounds = WindowBounds::centered(size(px(width), px(height)), cx);
         let options = WindowOptions {
             window_bounds: Some(bounds),
-            window_background: if self.settings.view.mica {
-                WindowBackgroundAppearance::Blurred
-            } else {
-                WindowBackgroundAppearance::Opaque
-            },
+            window_background: WindowBackgroundAppearance::Opaque,
             titlebar: Some(TitlebarOptions {
                 title: Some(feature.title().into()),
                 appears_transparent: custom_titlebar,
@@ -1841,17 +1830,8 @@ impl MainView {
         self.skin = skin;
         self.settings.view.theme_skin = skin.as_setting().to_string();
         let dark = self.theme_mode.is_dark(window.appearance());
-        theme::apply(cx, dark, skin, self.settings.view.mica);
-        self.palette = Palette::for_theme(dark, skin, self.settings.view.mica);
-        self.save_settings();
-        cx.notify();
-    }
-
-    /// 重新应用当前明暗、皮肤与 Mica 设置，用于外观页切换材质。
-    pub(crate) fn reapply_theme(&mut self, cx: &mut Context<Self>) {
-        let dark = self.palette.dark;
-        theme::apply(cx, dark, self.skin, self.settings.view.mica);
-        self.palette = Palette::for_theme(dark, self.skin, self.settings.view.mica);
+        theme::apply(cx, dark, skin);
+        self.palette = Palette::for_skin(dark, skin);
         self.save_settings();
         cx.notify();
     }
@@ -1864,8 +1844,8 @@ impl MainView {
             ThemeMode::Dark
         };
         self.settings.view.theme = self.theme_mode.as_setting().to_string();
-        theme::apply(cx, !dark, self.skin, self.settings.view.mica);
-        self.palette = Palette::for_theme(!dark, self.skin, self.settings.view.mica);
+        theme::apply(cx, !dark, self.skin);
+        self.palette = Palette::for_skin(!dark, self.skin);
         self.save_settings();
         window.set_window_title(&self.window_title());
         cx.notify();
@@ -1875,8 +1855,8 @@ impl MainView {
         self.theme_mode = mode;
         self.settings.view.theme = mode.as_setting().to_string();
         let dark = mode.is_dark(window.appearance());
-        theme::apply(cx, dark, self.skin, self.settings.view.mica);
-        self.palette = Palette::for_theme(dark, self.skin, self.settings.view.mica);
+        theme::apply(cx, dark, self.skin);
+        self.palette = Palette::for_skin(dark, self.skin);
         self.save_settings();
         cx.notify();
     }
@@ -2201,11 +2181,7 @@ impl Render for MainView {
             .flex()
             .flex_col()
             .size_full()
-            .bg(if self.settings.view.mica {
-                theme::mica_root_background(palette.dark)
-            } else {
-                palette.bg.into()
-            })
+            .bg(palette.bg)
             .text_color(palette.text)
             .font_family(crate::theme::ui_font_family())
             .relative()
@@ -2257,11 +2233,11 @@ fn start_action_card(
         .min_w(px(160.0))
         .max_w(px(280.0))
         .h(px(182.0))
-        .rounded(px(if palette.mica { 8.0 } else { 12.0 }))
+        .rounded(px(12.0))
         .border_1()
         .border_color(palette.line)
         .bg(palette.card)
-        .when(!palette.mica, |this| this.shadow_sm())
+        .shadow_sm()
         .cursor_pointer()
         .flex()
         .flex_col()
@@ -2391,11 +2367,7 @@ impl MainView {
             .flex()
             .flex_col()
             .size_full()
-            .bg(if self.settings.view.mica {
-                theme::mica_root_background(palette.dark)
-            } else {
-                palette.bg.into()
-            })
+            .bg(palette.bg)
             .text_color(palette.text)
             .font_family(crate::theme::ui_font_family())
             .relative()

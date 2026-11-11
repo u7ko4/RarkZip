@@ -220,11 +220,9 @@ impl QuickView {
         let skin = Skin::from_setting(&settings.view.theme_skin);
         let dark = theme_mode.is_dark(window.appearance());
         theme::set_ui_font_size(settings.view.font_size);
-        theme::apply(cx, dark, skin, settings.view.mica);
-        crate::mica::apply_titlebar(window, dark);
-        let palette = Palette::for_theme(dark, skin, settings.view.mica);
-        // Mica 下快速弹窗使用系统标题栏。
-        let custom_titlebar = settings.view.use_custom_titlebar && !settings.view.mica;
+        theme::apply(cx, dark, skin);
+        let palette = Palette::for_skin(dark, skin);
+        let custom_titlebar = settings.view.use_custom_titlebar;
 
         let remembered_dir = settings.ui.last_extract_dir.trim().to_string();
         let default_dir = match &action {
@@ -2047,11 +2045,7 @@ impl Render for QuickView {
             .flex()
             .flex_col()
             .size_full()
-            .bg(if self.settings.view.mica {
-                theme::mica_root_background(palette.dark)
-            } else {
-                palette.bg.into()
-            })
+            .bg(palette.bg)
             .text_color(palette.text)
             .font_family(crate::theme::ui_font_family())
             .when_some(titlebar, |this, titlebar| this.child(titlebar))

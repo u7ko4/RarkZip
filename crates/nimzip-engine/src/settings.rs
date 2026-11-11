@@ -122,9 +122,6 @@ pub struct ViewSettings {
     pub theme: String,
     /// 内置主题皮肤 key。
     pub theme_skin: String,
-    /// 使用 Windows 11 Mica 风格材质（浅色/深色跟随当前主题）。
-    #[serde(default)]
-    pub mica: bool,
     pub font_size: f32,
     /// 工具栏图标的绘制尺寸（px），默认 18。
     pub toolbar_icon_size: f32,
@@ -153,7 +150,6 @@ impl Default for ViewSettings {
             use_custom_titlebar: true,
             theme: "system".to_string(),
             theme_skin: "blue".to_string(),
-            mica: false,
             font_size: 13.0,
             toolbar_icon_size: 18.0,
             toolbar_height: 48.0,

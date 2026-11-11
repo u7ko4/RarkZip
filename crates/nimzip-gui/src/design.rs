@@ -26,16 +26,12 @@ fn handler(
 
 /// 白色卡片：1px 边框 + 12px 圆角 + 极轻投影。
 pub fn card(palette: &Palette) -> Div {
-    let card = div()
-        .rounded(px(if palette.mica { 8.0 } else { 12.0 }))
+    div()
+        .rounded(px(12.0))
         .border_1()
         .border_color(palette.line)
-        .bg(palette.card);
-    if palette.mica {
-        card
-    } else {
-        card.shadow_sm()
-    }
+        .bg(palette.card)
+        .shadow_sm()
 }
 
 /// 带内边距的卡片。

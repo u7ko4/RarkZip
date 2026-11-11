@@ -10,7 +10,6 @@ mod clipboard;
 mod components;
 mod design;
 mod i18n;
-mod mica;
 mod quick;
 mod task;
 mod theme;
@@ -203,9 +202,7 @@ fn main() -> std::process::ExitCode {
             settings.ui.window_height.clamp(420.0, 2160.0),
         )
     };
-    // Mica 主题下，独立功能窗口/快速弹窗使用系统标题栏；主窗口保留用户设置。
-    let custom_titlebar = settings.view.use_custom_titlebar
-        && !(settings.view.mica && (quick_action.is_some() || feature_window.is_some()));
+    let custom_titlebar = settings.view.use_custom_titlebar;
     let window_background = WindowBackgroundAppearance::Opaque;
     let window_title = if quick_action.is_some() {
         "NimZip"
@@ -224,7 +221,6 @@ fn main() -> std::process::ExitCode {
         _ => point(px(60.0), px(60.0)),
     };
 
-    crate::mica::refresh_wallpaper_tint();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {

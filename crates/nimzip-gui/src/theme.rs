@@ -1,13 +1,9 @@
 use gpui_kit::component::{Theme, ThemeMode as ComponentThemeMode};
 use gpui_kit::*;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 用户设置的界面基准字号（px）。所有文字尺寸按 `size / 13` 等比缩放。
 static UI_FONT_SIZE_BITS: AtomicU32 = AtomicU32::new(13.0_f32.to_bits());
-/// 当前是否启用 Mica（供根字体、控件圆角等全局样式读取）。
-static MICA_ENABLED: AtomicBool = AtomicBool::new(false);
-/// 桌面壁纸平均色，格式 0xRRGGBB；用于生成 Mica 底色。
-static MICA_TINT_BITS: AtomicU32 = AtomicU32::new(0x00F3F3F3);
 
 pub fn set_ui_font_size(size: f32) {
     let clamped = if size.is_finite() {
@@ -53,47 +49,8 @@ pub fn title() -> Pixels {
     font_px(19.0)
 }
 
-pub fn set_mica_enabled(enabled: bool) {
-    MICA_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-pub fn mica_enabled() -> bool {
-    MICA_ENABLED.load(Ordering::Relaxed)
-}
-
 pub fn ui_font_family() -> &'static str {
-    if mica_enabled() {
-        "Segoe UI Variable Text"
-    } else {
-        "Microsoft YaHei UI"
-    }
-}
-
-pub fn set_mica_tint((r, g, b): (u8, u8, u8)) {
-    let rgb = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
-    MICA_TINT_BITS.store(rgb, Ordering::Relaxed);
-}
-
-fn mica_tint() -> u32 {
-    MICA_TINT_BITS.load(Ordering::Relaxed) & 0x00FF_FFFF
-}
-
-fn mix_color(from: u32, to: u32, amount: f32) -> u32 {
-    let amount = amount.clamp(0.0, 1.0);
-    let blend = |shift: u32| {
-        let a = ((from >> shift) & 0xFF) as f32;
-        let b = ((to >> shift) & 0xFF) as f32;
-        ((a + (b - a) * amount).round().clamp(0.0, 255.0) as u32) << shift
-    };
-    blend(16) | blend(8) | blend(0)
-}
-
-fn mica_page_tint(dark: bool) -> u32 {
-    if dark {
-        mix_color(mica_tint(), 0x202020, 0.90)
-    } else {
-        mix_color(mica_tint(), 0xFFFFFF, 0.94)
-    }
+    "Microsoft YaHei UI"
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,9 +159,9 @@ impl Skin {
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub bg: Hsla,
-    /// 页面/大面板背景；Mica 下透明，让窗口材质透出。
+    /// 页面/大面板背景。
     pub page: Hsla,
-    /// 卡片背景；Mica 下比菜单等瞬态表面更透明。
+    /// 卡片背景。
     pub card: Hsla,
     pub panel: Hsla,
     pub hover: Hsla,
@@ -232,8 +189,6 @@ pub struct Palette {
     pub overlay: Hsla,
     pub white: Hsla,
     pub dark: bool,
-    /// 当前是否启用 Mica 材质（用于去掉卡片阴影等特殊样式）。
-    pub mica: bool,
 }
 
 fn color(hex: u32) -> Hsla {
@@ -278,7 +233,6 @@ impl Palette {
             overlay: alpha(0x1B2333, 96),
             white: color(0xFFFFFF),
             dark: false,
-            mica: false,
         }
     }
 
@@ -310,7 +264,6 @@ impl Palette {
             overlay: alpha(0x000000, 120),
             white: color(0xFFFFFF),
             dark: true,
-            mica: false,
         }
     }
 
@@ -319,92 +272,6 @@ impl Palette {
             Self::dark()
         } else {
             Self::light()
-        }
-    }
-
-    /// Windows 11 Mica 风格浅色材质（对齐 WinUI Gallery）。
-    pub fn mica_light() -> Self {
-        let tint = mica_page_tint(false);
-        Self {
-            // WinUI 中菜单/气泡属于瞬态表面，保持接近不透明。
-            bg: color(mix_color(tint, 0xFFFFFF, 0.90)),
-            // 页面本身透明，由窗口 Mica 底色提供；导航面板使用材质色。
-            page: Hsla::transparent_black(),
-            card: color(mix_color(tint, 0xFFFFFF, 0.62)),
-            panel: color(tint),
-            hover: color(mix_color(tint, 0x000000, 0.05)),
-            line: color(0xE5E5E5),
-            line_strong: color(0xD6D6D6),
-            text: color(0x1A1A1A),
-            sub: color(0x5D5D5D),
-            muted: color(0x8A8A8A),
-            accent: color(0x0067C0),
-            accent_hover: color(0x1975C5),
-            accent_active: color(0x005AA8),
-            accent_text: color(0xFFFFFF),
-            accent_soft: alpha(0x0067C0, 26),
-            accent_softer: alpha(0x0067C0, 15),
-            ok: color(0x0F7B0F),
-            ok_soft: alpha(0x0F7B0F, 26),
-            warn: color(0x9D5D00),
-            warn_soft: alpha(0x9D5D00, 26),
-            bad: color(0xC42B1C),
-            bad_soft: alpha(0xC42B1C, 24),
-            bar: Hsla::transparent_black(),
-            overlay: alpha(0x1B2333, 96),
-            white: color(0xFFFFFF),
-            dark: false,
-            mica: true,
-        }
-    }
-
-    /// Windows 11 Mica 风格深色材质（对齐 WinUI Gallery）。
-    pub fn mica_dark() -> Self {
-        let tint = mica_page_tint(true);
-        Self {
-            bg: color(mix_color(tint, 0x000000, 0.30)),
-            page: Hsla::transparent_black(),
-            card: color(mix_color(tint, 0xFFFFFF, 0.07)),
-            panel: color(tint),
-            hover: color(mix_color(tint, 0xFFFFFF, 0.10)),
-            line: color(0x3A3A3A),
-            line_strong: color(0x4A4A4A),
-            text: color(0xFFFFFF),
-            sub: color(0xC5C5C5),
-            muted: color(0x8B8B8B),
-            accent: color(0x60CDFF),
-            accent_hover: color(0x7BD4FF),
-            accent_active: color(0x4CC2FF),
-            accent_text: color(0x000000),
-            accent_soft: alpha(0x60CDFF, 36),
-            accent_softer: alpha(0x60CDFF, 20),
-            ok: color(0x6CCB5F),
-            ok_soft: alpha(0x2E8B4F, 41),
-            warn: color(0xF2B75C),
-            warn_soft: alpha(0x9D5D00, 41),
-            bad: color(0xFF99A4),
-            bad_soft: alpha(0xC42B1C, 45),
-            bar: Hsla::transparent_black(),
-            overlay: alpha(0x000000, 120),
-            white: color(0xFFFFFF),
-            dark: true,
-            mica: true,
-        }
-    }
-
-    pub fn mica(dark: bool) -> Self {
-        if dark {
-            Self::mica_dark()
-        } else {
-            Self::mica_light()
-        }
-    }
-
-    pub fn for_theme(dark: bool, skin: Skin, mica: bool) -> Self {
-        if mica {
-            Self::mica(dark)
-        } else {
-            Self::for_skin(dark, skin)
         }
     }
 
@@ -434,31 +301,9 @@ impl Palette {
     }
 }
 
-/// Mica 窗口底色。设计稿为浅蓝灰 → 冷灰、深色为炭灰 → 近黑的双段渐变。
-pub fn mica_root_background(dark: bool) -> Background {
-    let base = mica_page_tint(dark);
-    let (from, to) = if dark {
-        (
-            mix_color(base, 0xFFFFFF, 0.025),
-            mix_color(base, 0x000000, 0.04),
-        )
-    } else {
-        (
-            mix_color(base, 0xFFFFFF, 0.03),
-            mix_color(base, 0x000000, 0.025),
-        )
-    };
-    linear_gradient(
-        165.0,
-        linear_color_stop(color(from), 0.0),
-        linear_color_stop(color(to), 1.0),
-    )
-}
-
 /// 同步 GPUI Kit 语义主题，使 Input/Button/Switch 等内置控件与自绘界面一致。
-pub fn apply(cx: &mut App, dark: bool, skin: Skin, mica: bool) {
-    set_mica_enabled(mica);
-    let palette = Palette::for_theme(dark, skin, mica);
+pub fn apply(cx: &mut App, dark: bool, skin: Skin) {
+    let palette = Palette::for_skin(dark, skin);
     Theme::change(
         if dark {
             ComponentThemeMode::Dark
@@ -473,8 +318,8 @@ pub fn apply(cx: &mut App, dark: bool, skin: Skin, mica: bool) {
         theme.mono_font_family = "Cascadia Mono".into();
         theme.font_size = px(ui_font_size());
         theme.mono_font_size = px((ui_font_size() - 0.5).max(9.0));
-        theme.radius = px(if mica { 4.0 } else { 8.0 });
-        theme.radius_lg = px(if mica { 8.0 } else { 12.0 });
+        theme.radius = px(8.0);
+        theme.radius_lg = px(12.0);
         theme.focus_ring = true;
 
         theme.colors.background = palette.bg;
