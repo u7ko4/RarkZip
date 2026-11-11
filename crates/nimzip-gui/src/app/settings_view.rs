@@ -1351,7 +1351,7 @@ impl MainView {
                 ),
             ],
         );
-        let algorithms_card = design::card(&palette).child(menu_grid(algorithm_rows, 4));
+        let algorithms_card = design::card(&palette).child(menu_grid(&palette, algorithm_rows, 4));
 
         let display_rows = vec![
             menu_check_row(
@@ -1378,7 +1378,7 @@ impl MainView {
             ),
         ];
         let display_head = menu_group_head(&palette, "显示", "哈希窗口中的呈现方式", Vec::new());
-        let display_card = design::card(&palette).child(menu_grid(display_rows, 2));
+        let display_card = design::card(&palette).child(menu_grid(&palette, display_rows, 2));
 
         let export_rows = vec![
             menu_check_row(
@@ -1417,7 +1417,7 @@ impl MainView {
         ];
         let export_head =
             menu_group_head(&palette, "校验和文件", "导出格式与文件内容行为", Vec::new());
-        let export_card = design::card(&palette).child(menu_grid(export_rows, 2));
+        let export_card = design::card(&palette).child(menu_grid(&palette, export_rows, 2));
 
         let behavior_rows = vec![
             menu_check_row(
@@ -1446,7 +1446,7 @@ impl MainView {
         ];
         let behavior_head =
             menu_group_head(&palette, "行为", "自动计算与资源管理器集成", Vec::new());
-        let behavior_card = design::card(&palette).child(menu_grid(behavior_rows, 2));
+        let behavior_card = design::card(&palette).child(menu_grid(&palette, behavior_rows, 2));
 
         let note = design::info_note(
             &palette,
@@ -1791,7 +1791,7 @@ impl MainView {
                 cx.notify();
             }),
         ));
-        let extract_card = design::card(&palette).child(menu_grid(extract_rows, 2));
+        let extract_card = design::card(&palette).child(menu_grid(&palette, extract_rows, 2));
 
         let compress_all: Vec<String> = COMPRESS_MENU_OPTIONS
             .iter()
@@ -1856,7 +1856,7 @@ impl MainView {
                 }),
             ));
         }
-        let compress_card = design::card(&palette).child(menu_grid(compress_rows, 2));
+        let compress_card = design::card(&palette).child(menu_grid(&palette, compress_rows, 2));
 
         let empty_head = menu_group_head(
             &palette,
@@ -1894,7 +1894,7 @@ impl MainView {
                 }),
             ));
         }
-        let empty_card = design::card(&palette).child(menu_grid(empty_rows, 1));
+        let empty_card = design::card(&palette).child(menu_grid(&palette, empty_rows, 1));
 
         let other_head = menu_group_head(&palette, "其它", "菜单的整体行为", Vec::new());
         let other_rows = vec![
@@ -1954,7 +1954,7 @@ impl MainView {
                 }),
             ),
         ];
-        let other_card = design::card(&palette).child(menu_grid(other_rows, 2));
+        let other_card = design::card(&palette).child(menu_grid(&palette, other_rows, 2));
 
         let preview_note = design::info_note(
             &palette,
@@ -2561,8 +2561,6 @@ fn menu_check_row(
         .items_center()
         .gap(px(10.0))
         .py(px(9.0))
-        .border_b_1()
-        .border_color(palette.panel)
         .cursor_pointer()
         .text_size(crate::theme::font_px(13.5))
         .text_color(palette.sub)
@@ -2573,19 +2571,30 @@ fn menu_check_row(
         .into_any_element()
 }
 
-fn menu_grid(rows: Vec<AnyElement>, columns: usize) -> AnyElement {
+fn menu_grid(palette: &Palette, rows: Vec<AnyElement>, columns: usize) -> AnyElement {
     if columns <= 1 {
-        return div()
-            .flex()
-            .flex_col()
-            .px(px(20.0))
-            .py(px(6.0))
-            .children(rows)
-            .into_any_element();
+        let mut column = div().flex().flex_col().px(px(20.0)).py(px(6.0));
+        for (index, row) in rows.into_iter().enumerate() {
+            column = column.child(
+                div()
+                    .when(index > 0, |this| {
+                        this.border_t_1().border_color(palette.line)
+                    })
+                    .child(row),
+            );
+        }
+        return column.into_any_element();
     }
     let mut buckets: Vec<Vec<AnyElement>> = (0..columns).map(|_| Vec::new()).collect();
     for (index, row) in rows.into_iter().enumerate() {
-        buckets[index % columns].push(row);
+        buckets[index % columns].push(
+            div()
+                .when(index >= columns, |this| {
+                    this.border_t_1().border_color(palette.line)
+                })
+                .child(row)
+                .into_any_element(),
+        );
     }
     div()
         .flex()
