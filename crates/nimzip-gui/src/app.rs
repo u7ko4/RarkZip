@@ -342,6 +342,9 @@ enum Modal {
     Comment,
     Columns,
     Toolbar,
+    ConfirmDeletePassword {
+        index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -36,6 +36,9 @@ impl MainView {
             Modal::Comment => self.render_comment_modal(max_height, cx),
             Modal::Columns => self.render_columns_modal(max_height, cx),
             Modal::Toolbar => self.render_toolbar_modal(max_height, cx),
+            Modal::ConfirmDeletePassword { index } => {
+                self.render_delete_password_modal(index, max_height, cx)
+            }
         };
         div()
             .id("modal-backdrop")
@@ -554,6 +557,23 @@ impl MainView {
                                 .gap(px(2.0))
                                 .child(design::icon_action(
                                     &palette,
+                                    format!("pw-copy-{index}"),
+                                    IconName::Copy,
+                                    palette.sub,
+                                    false,
+                                    "复制密码",
+                                    cx.listener({
+                                        let password = entry.password.clone();
+                                        move |this, _, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                password.clone(),
+                                            ));
+                                            this.show_toast("已复制密码", ToastKind::Success, cx);
+                                        }
+                                    }),
+                                ))
+                                .child(design::icon_action(
+                                    &palette,
                                     format!("pw-up-{index}"),
                                     IconName::ArrowUp,
                                     palette.sub,
@@ -585,8 +605,7 @@ impl MainView {
                                     false,
                                     "删除",
                                     cx.listener(move |this, _, _, cx| {
-                                        this.password_book.remove(index);
-                                        let _ = this.password_book.save();
+                                        this.modal = Some(Modal::ConfirmDeletePassword { index });
                                         cx.notify();
                                     }),
                                 )),
@@ -718,6 +737,85 @@ impl MainView {
                     )
                     .into_any_element(),
             ),
+        )
+    }
+
+    fn render_delete_password_modal(
+        &mut self,
+        index: usize,
+        max_height: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let palette = self.palette;
+        let note = self
+            .password_book
+            .entries()
+            .get(index)
+            .map(|entry| entry.note.clone())
+            .unwrap_or_default();
+        let mut body = vec![div()
+            .text_size(crate::theme::body())
+            .text_color(palette.sub)
+            .child("确定从密码本删除这条密码吗？删除后自动试密将不再使用它。")
+            .into_any_element()];
+        if !note.is_empty() {
+            body.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child("备注")
+                    .child(design::tag(&palette, note, design::TagTone::Manual))
+                    .into_any_element(),
+            );
+        }
+        let footer = vec![
+            design::secondary_action(
+                "pw-delete-cancel",
+                "取消",
+                cx.listener(|this, _, _, cx| this.close_modal(cx)),
+            )
+            .into_any_element(),
+            div()
+                .id("pw-delete-confirm")
+                .role(Role::Button)
+                .aria_label("删除")
+                .h(px(crate::components::CONTROL_HEIGHT))
+                .px(px(16.0))
+                .rounded(px(crate::theme::RADIUS_CONTROL))
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(palette.bad)
+                .text_color(palette.white)
+                .text_size(crate::theme::body())
+                .cursor_pointer()
+                .hover(|style| style.bg(palette.bad))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.password_book.remove(index);
+                    if let Err(error) = this.password_book.save() {
+                        this.show_toast(format!("保存密码本失败：{error}"), ToastKind::Error, cx);
+                    } else {
+                        this.show_toast("已删除密码", ToastKind::Success, cx);
+                    }
+                    this.modal = None;
+                    cx.notify();
+                }))
+                .child("删除")
+                .into_any_element(),
+        ];
+        design::modal_shell(
+            &palette,
+            440.0,
+            max_height,
+            "删除密码",
+            Some("此操作无法撤销。".to_string()),
+            None,
+            body,
+            footer,
+            cx.listener(|this, _, _, cx| this.close_modal(cx)),
         )
     }
 
