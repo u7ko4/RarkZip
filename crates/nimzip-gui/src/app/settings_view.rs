@@ -1,3 +1,4 @@
+use gpui_kit::component::input::Input;
 use nimzip_engine::{ArchiveFormat, Codepage, Settings};
 
 use crate::app::impls::ui::level_label;
@@ -417,7 +418,6 @@ impl MainView {
         let format = ArchiveFormat::from_name(&self.settings.compression.default_format)
             .filter(|format| format.can_create())
             .unwrap_or(ArchiveFormat::Zip);
-        let exclude = self.settings.compression.exclude.clone();
 
         let level_control = self.setting_select(
             "settings-default-level",
@@ -487,27 +487,37 @@ impl MainView {
                     .flex()
                     .flex_col()
                     .gap(px(6.0))
-                    .child(design::field_label(&palette, "默认排除规则"))
                     .child(
                         div()
-                            .w_full()
-                            .min_h(px(38.0))
-                            .px(px(12.0))
-                            .py(px(9.0))
-                            .rounded(px(9.0))
-                            .border_1()
-                            .border_color(palette.line)
-                            .bg(palette.panel)
-                            .font_family("Cascadia Mono")
-                            .text_size(crate::theme::font_px(12.0))
-                            .text_color(palette.sub)
-                            .child(exclude),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(design::field_label(&palette, "默认排除规则"))
+                            .child(design::link_action(
+                                "settings-exclude-reset",
+                                "重置",
+                                &palette,
+                                cx.listener(|this, _, window, cx| {
+                                    let default = nimzip_engine::settings::DEFAULT_EXCLUDE;
+                                    this.settings.compression.exclude = default.to_string();
+                                    this.settings_exclude_input.update(cx, |state, cx| {
+                                        state.set_value(default, window, cx);
+                                    });
+                                    this.save_settings();
+                                    cx.notify();
+                                }),
+                            )),
+                    )
+                    .child(
+                        crate::components::control_height(Input::new(&self.settings_exclude_input))
+                            .text_size(crate::theme::body())
+                            .w_full(),
                     )
                     .child(
                         div()
                             .text_size(crate::theme::font_px(12.0))
                             .text_color(palette.muted)
-                            .child("在新建压缩对话中可逐次覆盖；支持 ; , 换行分隔。"),
+                            .child("支持 ; 或 , 分隔多个规则；新建压缩时可逐次覆盖。"),
                     ),
             );
 

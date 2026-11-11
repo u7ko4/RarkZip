@@ -76,6 +76,9 @@ impl Default for ExtractionSettings {
     }
 }
 
+/// 默认排除规则；设置页与新建压缩对话框共用。
+pub const DEFAULT_EXCLUDE: &str = "*.bak; *.tmp; Thumbs.db";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CompressionSettings {
@@ -100,7 +103,7 @@ impl Default for CompressionSettings {
             use_utf8: true,
             zip64: true,
             fast_mode: false,
-            exclude: "*.bak; *.tmp; Thumbs.db".to_string(),
+            exclude: DEFAULT_EXCLUDE.to_string(),
             default_dir: String::new(),
         }
     }

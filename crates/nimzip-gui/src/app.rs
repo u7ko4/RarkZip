@@ -463,6 +463,7 @@ pub struct MainView {
     icon_size_slider: Entity<SliderState>,
     password_input: Entity<InputState>,
     exclude_input: Entity<InputState>,
+    settings_exclude_input: Entity<InputState>,
     password_book: PasswordBook,
     password_new: Entity<InputState>,
     password_note: Entity<InputState>,
@@ -623,6 +624,9 @@ impl MainView {
         let exclude_input = cx.new(|cx| {
             InputState::new(window, cx).default_value(settings.compression.exclude.clone())
         });
+        let settings_exclude_input = cx.new(|cx| {
+            InputState::new(window, cx).default_value(settings.compression.exclude.clone())
+        });
         let password_new = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
@@ -701,6 +705,7 @@ impl MainView {
             icon_size_slider,
             password_input,
             exclude_input,
+            settings_exclude_input,
             password_book,
             password_new,
             password_note,
@@ -771,6 +776,18 @@ impl MainView {
                 this.submit_password(cx);
             }
         })
+        .detach();
+
+        cx.subscribe(
+            &view.settings_exclude_input,
+            |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.settings.compression.exclude =
+                        this.settings_exclude_input.read(cx).value().to_string();
+                    this.save_settings();
+                }
+            },
+        )
         .detach();
 
         window.focus(&view.focus_handle, cx);
