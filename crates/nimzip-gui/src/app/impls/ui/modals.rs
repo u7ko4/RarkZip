@@ -3603,12 +3603,6 @@ impl MainView {
             .flex()
             .items_center()
             .gap(px(16.0))
-            .px(px(18.0))
-            .py(px(14.0))
-            .rounded(px(crate::theme::RADIUS_OVERLAY))
-            .border_1()
-            .border_color(palette.line)
-            .bg(palette.panel)
             .child(advanced_toggle)
             .child(
                 div()
