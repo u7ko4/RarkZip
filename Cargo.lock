@@ -4028,91 +4028,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
-name = "nimzip-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "ctrlc",
- "nimzip-engine",
- "nimzip-shell",
- "rpassword",
- "serde",
- "serde_json",
- "tempfile",
- "walkdir",
-]
-
-[[package]]
-name = "nimzip-engine"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "blake3",
- "bzip2",
- "chrono",
- "crc32fast",
- "encoding_rs",
- "filetime",
- "flate2",
- "globset",
- "libdeflater",
- "libmkiso",
- "lzma-rust2 0.16.5",
- "md-5",
- "oxiarc-archive",
- "serde",
- "serde_json",
- "sevenz-rust2",
- "sha1",
- "sha2 0.10.9",
- "sha3",
- "tar",
- "tempfile",
- "thiserror 2.0.21",
- "trash",
- "unrar-ng",
- "walkdir",
- "windows 0.62.2",
- "xxhash-rust",
- "xz2",
- "zip",
- "zpaq_rs",
- "zstd 0.14.3",
-]
-
-[[package]]
-name = "nimzip-gui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "crossbeam-channel",
- "embed-resource",
- "gpui-kit",
- "image",
- "nimzip-cli",
- "nimzip-engine",
- "nimzip-shell",
- "open",
- "raw-window-handle",
- "rfd",
- "serde",
- "serde_json",
- "walkdir",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "nimzip-shell"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "nimzip-engine",
- "windows 0.62.2",
- "windows-core 0.62.2",
- "winreg",
-]
-
-[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5472,6 +5387,91 @@ name = "rangemap"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
+
+[[package]]
+name = "rarkzip-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ctrlc",
+ "rarkzip-engine",
+ "rarkzip-shell",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
+name = "rarkzip-engine"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "blake3",
+ "bzip2",
+ "chrono",
+ "crc32fast",
+ "encoding_rs",
+ "filetime",
+ "flate2",
+ "globset",
+ "libdeflater",
+ "libmkiso",
+ "lzma-rust2 0.16.5",
+ "md-5",
+ "oxiarc-archive",
+ "serde",
+ "serde_json",
+ "sevenz-rust2",
+ "sha1",
+ "sha2 0.10.9",
+ "sha3",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "trash",
+ "unrar-ng",
+ "walkdir",
+ "windows 0.62.2",
+ "xxhash-rust",
+ "xz2",
+ "zip",
+ "zpaq_rs",
+ "zstd 0.14.3",
+]
+
+[[package]]
+name = "rarkzip-gui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crossbeam-channel",
+ "embed-resource",
+ "gpui-kit",
+ "image",
+ "open",
+ "rarkzip-cli",
+ "rarkzip-engine",
+ "rarkzip-shell",
+ "raw-window-handle",
+ "rfd",
+ "serde",
+ "serde_json",
+ "walkdir",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "rarkzip-shell"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rarkzip-engine",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+ "winreg",
+]
 
 [[package]]
 name = "rav1e"

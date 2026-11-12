@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/nimzip-engine",
-    "crates/nimzip-cli",
-    "crates/nimzip-gui",
-    "crates/nimzip-shell",
+    "crates/rarkzip-engine",
+    "crates/rarkzip-cli",
+    "crates/rarkzip-gui",
+    "crates/rarkzip-shell",
 ]
 
 [workspace.package]
@@ -12,7 +12,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-authors = ["NimZip Contributors"]
+authors = ["RarkZip Contributors"]
 
 [profile.release]
 opt-level = 3

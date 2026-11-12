@@ -1,8 +1,8 @@
-# NimZip
+# RarkZip
 
 现代、快速的 Windows 压缩与归档管理工具，核心引擎使用纯 Rust，桌面界面基于 GPUI。
 
-NimZip 提供归档浏览与编辑、智能解压、嵌套解压、密码管理、文件哈希和 Windows 资源管理器集成。
+RarkZip 提供归档浏览与编辑、智能解压、嵌套解压、密码管理、文件哈希和 Windows 资源管理器集成。
 
 [English](README.md)
 
@@ -40,24 +40,24 @@ NimZip 提供归档浏览与编辑、智能解压、嵌套解压、密码管理�
 
 ```powershell
 git clone <repository-url>
-cd NimZip
+cd RarkZip
 cargo build --release --workspace
 ```
 
 构建产物：
 
-- `target\release\nimzip.exe` — 桌面主程序
+- `target\release\rarkzip.exe` — 桌面主程序
 - `target\release\bx.exe` — 无头命令行工具
-- `target\release\nimzip_shell.dll` — 可选的资源管理器预览/右键菜单扩展
+- `target\release\rarkzip_shell.dll` — 可选的资源管理器预览/右键菜单扩展
 
-使用资源管理器集成时，请将 `nimzip_shell.dll` 与 `nimzip.exe` 放在同一目录。
+使用资源管理器集成时，请将 `rarkzip_shell.dll` 与 `rarkzip.exe` 放在同一目录。
 
 ## 使用
 
 启动桌面程序：
 
 ```powershell
-target\release\nimzip.exe
+target\release\rarkzip.exe
 ```
 
 常用 CLI 命令：
@@ -75,17 +75,17 @@ bx.exe recover archive.zip --mask ?l?l?d?d
 可在 **设置 → 文件关联 / 右键菜单** 中启用或更新资源管理器集成，也可以运行：
 
 ```powershell
-nimzip.exe --cli shell install
+rarkzip.exe --cli shell install
 ```
 
 ## 工程结构
 
 ```text
 crates/
-  nimzip-engine/   归档引擎、解压、加密、哈希与密码恢复
-  nimzip-gui/      GPUI 桌面界面
-  nimzip-cli/      bx 命令行工具
-  nimzip-shell/    Windows 资源管理器右键菜单与预览处理器
+  rarkzip-engine/   归档引擎、解压、加密、哈希与密码恢复
+  rarkzip-gui/      GPUI 桌面界面
+  rarkzip-cli/      bx 命令行工具
+  rarkzip-shell/    Windows 资源管理器右键菜单与预览处理器
 ```
 
 ## 测试

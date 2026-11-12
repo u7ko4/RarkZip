@@ -1,8 +1,8 @@
-# NimZip
+# RarkZip
 
 A fast, modern archive manager for Windows, powered by a native Rust engine and a GPUI desktop interface.
 
-NimZip combines everyday archive browsing and editing with smart extraction, nested archive handling, password management, hashing, and Windows Explorer integration.
+RarkZip combines everyday archive browsing and editing with smart extraction, nested archive handling, password management, hashing, and Windows Explorer integration.
 
 [中文文档](README_CN.md)
 
@@ -40,24 +40,24 @@ NimZip combines everyday archive browsing and editing with smart extraction, nes
 
 ```powershell
 git clone <repository-url>
-cd NimZip
+cd RarkZip
 cargo build --release --workspace
 ```
 
 Build outputs:
 
-- `target\release\nimzip.exe` — desktop application
+- `target\release\rarkzip.exe` — desktop application
 - `target\release\bx.exe` — headless command-line interface
-- `target\release\nimzip_shell.dll` — optional Explorer preview/context-menu extension
+- `target\release\rarkzip_shell.dll` — optional Explorer preview/context-menu extension
 
-To use Explorer integration, keep `nimzip_shell.dll` in the same directory as `nimzip.exe`.
+To use Explorer integration, keep `rarkzip_shell.dll` in the same directory as `rarkzip.exe`.
 
 ## Usage
 
 Launch the desktop application:
 
 ```powershell
-target\release\nimzip.exe
+target\release\rarkzip.exe
 ```
 
 Common CLI commands:
@@ -75,17 +75,17 @@ bx.exe recover archive.zip --mask ?l?l?d?d
 Enable or update Explorer integration from **Settings → File Associations / Context Menu**, or run:
 
 ```powershell
-nimzip.exe --cli shell install
+rarkzip.exe --cli shell install
 ```
 
 ## Project Structure
 
 ```text
 crates/
-  nimzip-engine/   Archive engine, extraction, encryption, hashing, recovery
-  nimzip-gui/      GPUI desktop application
-  nimzip-cli/      bx command-line interface
-  nimzip-shell/    Windows Explorer context menu and preview handler
+  rarkzip-engine/   Archive engine, extraction, encryption, hashing, recovery
+  rarkzip-gui/      GPUI desktop application
+  rarkzip-cli/      bx command-line interface
+  rarkzip-shell/    Windows Explorer context menu and preview handler
 ```
 
 ## Testing
