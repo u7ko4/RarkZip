@@ -1793,24 +1793,23 @@ impl MainView {
                 cx.notify();
             }),
         ));
-        let extract_scope_card = design::card(&palette).child(menu_grid(
+        let extract_scope_row = menu_check_row(
             &palette,
-            vec![menu_check_row(
-                &palette,
-                "cm-extract-any",
-                extract_any_file,
-                "在任意文件类型上显示（含无扩展名）",
-                cx.listener(|this, _, _, cx| {
-                    this.settings.integration.extract_any_file =
-                        !this.settings.integration.extract_any_file;
-                    this.save_settings();
-                    this.apply_shell_menu(cx);
-                    cx.notify();
-                }),
-            )],
-            1,
-        ));
-        let extract_card = design::card(&palette).child(menu_grid(&palette, extract_rows, 2));
+            "cm-extract-any",
+            extract_any_file,
+            "在任意文件类型上显示（含无扩展名）",
+            cx.listener(|this, _, _, cx| {
+                this.settings.integration.extract_any_file =
+                    !this.settings.integration.extract_any_file;
+                this.save_settings();
+                this.apply_shell_menu(cx);
+                cx.notify();
+            }),
+        );
+        let extract_card = design::card(&palette)
+            .child(menu_grid(&palette, vec![extract_scope_row], 1))
+            .child(div().h(px(1.0)).mx(px(20.0)).bg(palette.line).flex_none())
+            .child(menu_grid(&palette, extract_rows, 2));
 
         let compress_all: Vec<String> = COMPRESS_MENU_OPTIONS
             .iter()
@@ -1992,7 +1991,6 @@ impl MainView {
             ))
             .child(double_card)
             .child(extract_head)
-            .child(extract_scope_card)
             .child(extract_card)
             .child(compress_head)
             .child(compress_card)
@@ -2591,13 +2589,13 @@ fn menu_check_row(
         .hover(|style| style.text_color(palette.accent))
         .on_click(onclick)
         .child(design::check_box_visual(palette, checked, false))
-        .child(div().min_w_0().truncate().child(label))
+        .child(div().flex_1().min_w_0().truncate().child(label))
         .into_any_element()
 }
 
 fn menu_grid(palette: &Palette, rows: Vec<AnyElement>, columns: usize) -> AnyElement {
     if columns <= 1 {
-        let mut column = div().flex().flex_col().px(px(20.0)).py(px(6.0));
+        let mut column = div().w_full().flex().flex_col().px(px(20.0)).py(px(6.0));
         for (index, row) in rows.into_iter().enumerate() {
             column = column.child(
                 div()
@@ -2621,6 +2619,7 @@ fn menu_grid(palette: &Palette, rows: Vec<AnyElement>, columns: usize) -> AnyEle
         );
     }
     div()
+        .w_full()
         .flex()
         .gap(px(30.0))
         .px(px(20.0))
