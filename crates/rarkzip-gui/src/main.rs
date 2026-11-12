@@ -220,7 +220,16 @@ fn main() -> std::process::ExitCode {
         )
     };
     let custom_titlebar = settings.view.use_custom_titlebar;
-    let window_background = WindowBackgroundAppearance::Opaque;
+    // Linux 没有原生的透明标题栏：自绘标题栏需要客户端装饰，窗口背景也要
+    // 透明才能在圆角/阴影外框周围留白。Windows/macOS 继续沿用系统标题栏
+    // 的隐藏方式。
+    let client_decorations =
+        custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"));
+    let window_background = if client_decorations {
+        WindowBackgroundAppearance::Transparent
+    } else {
+        WindowBackgroundAppearance::Opaque
+    };
     let window_title = if quick_action.is_some() {
         "RarkZip"
     } else {
@@ -257,6 +266,11 @@ fn main() -> std::process::ExitCode {
                     title: Some(window_title.into()),
                     appears_transparent: custom_titlebar,
                     traffic_light_position: None,
+                }),
+                window_decorations: Some(if client_decorations {
+                    WindowDecorations::Client
+                } else {
+                    WindowDecorations::Server
                 }),
                 // 快速解压/压缩弹窗按内容收紧高度，允许比主窗口更矮。
                 window_min_size: Some(if quick_action.is_some() {

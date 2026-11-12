@@ -54,6 +54,26 @@ cargo build --release --workspace
 
 使用资源管理器集成时，请将 `rarkzip_shell.dll` 与 `rarkzip.exe` 放在同一目录。
 
+### Linux
+
+归档引擎、`bx` 命令行和 GPUI 桌面界面同样可以在 Linux（X11 或 Wayland）上构建和运行。资源管理器集成、DPAPI 密码保护、AMSI 扫描和 Mark-of-the-Web 传播仅适用于 Windows；在其他平台上这些功能会被编译剔除或优雅降级。
+
+Debian/Ubuntu 构建依赖：
+
+```bash
+sudo apt install build-essential pkg-config libxkbcommon-dev libwayland-dev \
+  libx11-xcb-dev libfontconfig1-dev libvulkan-dev libegl1-mesa-dev
+```
+
+然后执行同样的 `cargo build --release --workspace`。产物为 `target/release/rarkzip` 和 `target/release/bx`（不带 `.exe`）；`rarkzip_shell` 在非 Windows 平台不生效。
+
+平台说明：
+
+- 缺少 DPAPI 时，密码本会回退为权限为 `0600` 的 JSON 文件，内容实际上是明文，请依赖文件系统权限保护。
+- WIM、CAB、ARJ、ASAR 解压需要 `PATH` 中存在 `7z`、`7zz` 或 `7za`，也可以通过 `RARKZIP_7Z` 指定可执行文件。
+- SFX ZIP 创建面向 Windows；其他平台请使用普通 ZIP、7z 或 TAR 归档。
+- 本仓库的 `.cargo/config.toml` 使用 rsproxy.cn 稀疏镜像；如果你的网络可以直连 crates.io，可自行调整或删除。
+
 ## 使用
 
 启动桌面程序：

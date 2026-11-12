@@ -1,11 +1,16 @@
-//! RarkZip Windows 资源管理器集成：经典右键菜单与文件关联。
+//! RarkZip 系统文件管理器集成：右键菜单与文件关联。
 //!
-//! 所有注册表操作都限定在 `HKCU\Software\Classes`（当前用户）或
-//! `HKLM\Software\Classes`（本机，需要管理员权限）内。非 Windows 平台上
-//! 写操作返回错误，查询返回 `false` 或 [`AssociationStatus::None`]。
+//! * Windows：注册表操作限定在 `HKCU\Software\Classes`（当前用户）或
+//!   `HKLM\Software\Classes`（本机，需要管理员权限）。
+//! * Linux：写入用户级 Nemo 动作、Nautilus 脚本与 KDE 服务菜单，并通过
+//!   `mimeapps.list` 注册“打开方式”候选。
+//! * 其他平台：写操作返回错误，查询返回 `false` 或 [`AssociationStatus::None`]。
 //!
 //! 本 crate 不依赖 GUI/CLI，两者都可以调用这里的 API 完成安装、卸载和
 //! 关联状态查询。
+
+// 各平台只保留自己的实现；未被当前平台使用的公共辅助函数允许成为死代码。
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::PathBuf;
 
@@ -13,6 +18,8 @@ mod common;
 
 #[cfg(windows)]
 mod context_menu;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod linux;
 #[cfg(windows)]
 mod preview;
 #[cfg(windows)]
@@ -29,6 +36,24 @@ pub use preview::{
     unregister_preview_handler,
 };
 
+/// 非 Windows 平台：预览处理器是 Windows Shell 扩展，始终视为未安装。
+#[cfg(not(windows))]
+pub fn preview_handler_installed() -> bool {
+    false
+}
+
+/// 非 Windows 平台：无法注册 Shell 预览处理器。
+#[cfg(not(windows))]
+pub fn register_preview_handler(_dll: &std::path::Path) -> anyhow::Result<()> {
+    Err(unsupported())
+}
+
+/// 非 Windows 平台：没有可卸载的 Shell 预览处理器。
+#[cfg(not(windows))]
+pub fn unregister_preview_handler() -> anyhow::Result<()> {
+    Err(unsupported())
+}
+
 /// 注册表写入范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ShellScope {
@@ -37,6 +62,27 @@ pub enum ShellScope {
     CurrentUser,
     /// 本机所有用户，写入 `HKLM\Software\Classes`，需要管理员权限。
     LocalMachine,
+}
+
+/// 当前平台可用的系统右键菜单集成后端名称。
+///
+/// Windows 返回资源管理器；Linux 返回已检测到的文件管理器（Nemo /
+/// Nautilus / Dolphin）；其他平台返回空列表。
+pub fn context_menu_backends() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        vec!["Windows 资源管理器"]
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::backends()
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
+    {
+        Vec::new()
+    }
 }
 
 /// 右键菜单安装选项。
@@ -128,7 +174,12 @@ pub fn install(options: &ShellOptions) -> anyhow::Result<()> {
         windows::install(options)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::install(options)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = options;
         Err(unsupported())
@@ -144,7 +195,12 @@ pub fn uninstall(scope: ShellScope) -> anyhow::Result<()> {
         windows::uninstall(scope)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::uninstall(scope)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = scope;
         Err(unsupported())
@@ -158,7 +214,12 @@ pub fn is_installed(scope: ShellScope) -> bool {
         windows::is_installed(scope)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::is_installed(scope)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = scope;
         false
@@ -194,7 +255,14 @@ pub fn register_association_with_action(
         windows::register_association_with_action(scope, extension, exe, action, folder)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        let _ = action;
+        let _ = folder;
+        linux::register_association_with_action(scope, extension, exe, action, folder)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = (scope, extension, exe, action, folder);
         Err(unsupported())
@@ -211,7 +279,12 @@ pub fn unregister_association(scope: ShellScope, extension: &str) -> anyhow::Res
         windows::unregister_association(scope, extension)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::unregister_association(scope, extension)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = (scope, extension);
         Err(unsupported())
@@ -225,7 +298,12 @@ pub fn is_association_registered(scope: ShellScope, extension: &str) -> bool {
         windows::is_association_registered(scope, extension)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::is_association_registered(scope, extension)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = (scope, extension);
         false
@@ -243,7 +321,12 @@ pub fn association_status(scope: ShellScope, extension: &str) -> AssociationStat
         windows::association_status(scope, extension)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        linux::association_status(scope, extension)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
     {
         let _ = (scope, extension);
         AssociationStatus::None
@@ -252,5 +335,5 @@ pub fn association_status(scope: ShellScope, extension: &str) -> AssociationStat
 
 #[cfg(not(windows))]
 fn unsupported() -> anyhow::Error {
-    anyhow::anyhow!("RarkZip 资源管理器集成仅支持 Windows")
+    anyhow::anyhow!("当前平台尚未支持资源管理器集成")
 }

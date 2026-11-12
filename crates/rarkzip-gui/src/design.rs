@@ -1157,3 +1157,37 @@ pub fn settings_content_with_footer(
         )
         .into_any_element()
 }
+
+/// 自绘窗口内容的圆角半径。
+pub const WINDOW_CORNER_RADIUS: f32 = 12.0;
+
+/// 客户端装饰窗口的内容外壳。
+///
+/// `gpui-component` 的 Root 插件已经负责阴影、边框、缩放热区和透明留白
+/// （`window_border`），这里只需给内容本身裁出圆角；服务端装饰时原样返回。
+pub fn window_frame(decorations: Decorations, inner: AnyElement) -> AnyElement {
+    let Decorations::Client { tiling } = decorations else {
+        return inner;
+    };
+    let rounding = px(WINDOW_CORNER_RADIUS);
+
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .when(!(tiling.top || tiling.right), |this| {
+            this.rounded_tr(rounding)
+        })
+        .when(!(tiling.top || tiling.left), |this| {
+            this.rounded_tl(rounding)
+        })
+        .when(!(tiling.bottom || tiling.right), |this| {
+            this.rounded_br(rounding)
+        })
+        .when(!(tiling.bottom || tiling.left), |this| {
+            this.rounded_bl(rounding)
+        })
+        .child(inner)
+        .into_any_element()
+}

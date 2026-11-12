@@ -6,15 +6,29 @@ use crate::paths::to_extended;
 use crate::util::system_time_to_unix;
 
 /// 读取归档文件上的 Mark-of-the-Web（Zone.Identifier）内容。
+///
+/// MOTW 是 NTFS 备用数据流，仅 Windows 支持；其他平台返回 `None`。
+#[cfg(windows)]
 pub fn read_motw(path: &Path) -> Option<Vec<u8>> {
     let ads = format!("{}:Zone.Identifier", path.to_string_lossy());
     fs::read(ads).ok()
 }
 
+#[cfg(not(windows))]
+pub fn read_motw(_path: &Path) -> Option<Vec<u8>> {
+    None
+}
+
 /// 把 MOTW 传播到解压产物，避免 SmartScreen 被绕过。
+#[cfg(windows)]
 pub fn apply_motw(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let ads = format!("{}:Zone.Identifier", path.to_string_lossy());
     fs::write(ads, content)
+}
+
+#[cfg(not(windows))]
+pub fn apply_motw(_path: &Path, _content: &[u8]) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// 删除到回收站；失败时返回错误，绝不静默永久删除。

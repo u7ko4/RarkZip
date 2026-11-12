@@ -273,6 +273,14 @@ impl FileViewMode {
 enum ContextTarget {
     Row(usize),
     Blank,
+    /// 目录树空白处：归档级菜单。
+    TreeBlank,
+    /// 地址栏：路径相关操作。
+    AddressBar,
+    /// 开始页空白处。
+    StartPage,
+    /// 自绘标题栏：窗口与常用入口。
+    Titlebar,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1712,25 +1720,34 @@ impl MainView {
         y: f32,
         cx: &mut Context<Self>,
     ) {
-        match index {
-            Some(index) => {
-                if !self.multi_selected.contains(&index) {
-                    self.multi_selected.clear();
-                    self.selected = Some(index);
-                }
-            }
-            None => {
+        let target = index
+            .map(ContextTarget::Row)
+            .unwrap_or(ContextTarget::Blank);
+        self.open_context_menu(target, index, x, y, cx);
+    }
+
+    /// 打开上下文菜单。`entry` 仅对条目行菜单生效，用于同步选中状态。
+    fn open_context_menu(
+        &mut self,
+        target: ContextTarget,
+        entry: Option<usize>,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(index) = entry {
+            if !self.multi_selected.contains(&index) {
                 self.multi_selected.clear();
-                self.selected = None;
+                self.selected = Some(index);
             }
+        } else if !matches!(
+            target,
+            ContextTarget::Titlebar | ContextTarget::StartPage | ContextTarget::AddressBar
+        ) {
+            self.multi_selected.clear();
+            self.selected = None;
         }
-        self.archive_menu = Some(ArchiveContextMenu {
-            x,
-            y,
-            target: index
-                .map(ContextTarget::Row)
-                .unwrap_or(ContextTarget::Blank),
-        });
+        self.archive_menu = Some(ArchiveContextMenu { x, y, target });
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -1852,17 +1869,28 @@ impl MainView {
         let width = persisted.ui.window_width.clamp(520.0, 3840.0);
         let height = persisted.ui.window_height.clamp(420.0, 2160.0);
         let custom_titlebar = self.settings.view.use_custom_titlebar;
+        let client_decorations =
+            custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"));
         let window_bounds = WindowBounds::Windowed(Bounds {
             origin: point(px(80.0), px(80.0)),
             size: size(px(width), px(height)),
         });
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
-            window_background: WindowBackgroundAppearance::Opaque,
+            window_background: if client_decorations {
+                WindowBackgroundAppearance::Transparent
+            } else {
+                WindowBackgroundAppearance::Opaque
+            },
             titlebar: Some(TitlebarOptions {
                 title: Some("RarkZip".into()),
                 appears_transparent: custom_titlebar,
                 traffic_light_position: None,
+            }),
+            window_decorations: Some(if client_decorations {
+                WindowDecorations::Client
+            } else {
+                WindowDecorations::Server
             }),
             ..Default::default()
         };
@@ -1887,14 +1915,25 @@ impl MainView {
         self.settings.ui.window_sizes = persisted.ui.window_sizes.clone();
         let (width, height) = persisted.window_size(feature.key(), feature.size());
         let custom_titlebar = self.settings.view.use_custom_titlebar;
+        let client_decorations =
+            custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"));
         let bounds = WindowBounds::centered(size(px(width), px(height)), cx);
         let options = WindowOptions {
             window_bounds: Some(bounds),
-            window_background: WindowBackgroundAppearance::Opaque,
+            window_background: if client_decorations {
+                WindowBackgroundAppearance::Transparent
+            } else {
+                WindowBackgroundAppearance::Opaque
+            },
             titlebar: Some(TitlebarOptions {
                 title: Some(feature.title().into()),
                 appears_transparent: custom_titlebar,
                 traffic_light_position: None,
+            }),
+            window_decorations: Some(if client_decorations {
+                WindowDecorations::Client
+            } else {
+                WindowDecorations::Server
             }),
             window_min_size: Some(size(px(620.0), px(460.0))),
             ..Default::default()
@@ -2261,6 +2300,19 @@ fn create_detail(outcome: &CreateOutcome) -> String {
     )
 }
 
+impl MainView {
+    /// 自绘标题栏时，给整个窗口内容裁出圆角。
+    ///
+    /// 阴影、边框与缩放热区由 `gpui-component` 的窗口插件负责；只有平台
+    /// 确实使用客户端装饰（Linux 合成器可用）时才裁剪，其他平台保持原样。
+    fn frame_window(&self, window: &mut Window, inner: AnyElement) -> AnyElement {
+        if !self.custom_titlebar {
+            return inner;
+        }
+        design::window_frame(window.window_decorations(), inner)
+    }
+}
+
 impl Render for MainView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title = self.window_title();
@@ -2269,7 +2321,8 @@ impl Render for MainView {
             self.last_title = title;
         }
         if self.feature_window.is_some() {
-            return self.render_feature_window(window, cx);
+            let inner = self.render_feature_window(window, cx);
+            return self.frame_window(window, inner);
         }
         let palette = self.palette;
         let content = match self.page {
@@ -2285,7 +2338,9 @@ impl Render for MainView {
         // 首页（未打开归档）也不再显示地址栏，直接进入卡片式开始页。
         let address_bar = (self.page == Page::Main && self.archive.is_some())
             .then(|| self.render_address_bar(window, cx));
-        let archive_context = (self.page == Page::Main && self.archive_menu.is_some())
+        let archive_context = self
+            .archive_menu
+            .is_some()
             .then(|| self.render_archive_context_menu(window, cx));
         let dropdown_overlay = self
             .dropdown
@@ -2295,7 +2350,7 @@ impl Render for MainView {
             message: toast.message.clone(),
             kind: toast.kind,
         });
-        div()
+        let root = div()
             .id("rarkzip-root")
             .track_focus(&self.focus_handle)
             .on_key_down(
@@ -2355,7 +2410,9 @@ impl Render for MainView {
             .when_some(modal, |this, modal| {
                 this.child(self.render_modal(modal, window, cx))
             })
-            .into_any_element()
+            .into_any_element();
+
+        self.frame_window(window, root)
     }
 }
 
@@ -2453,6 +2510,19 @@ impl MainView {
             .flex_1()
             .items_center()
             .justify_center()
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.open_context_menu(
+                        ContextTarget::StartPage,
+                        None,
+                        event.position.x.as_f32(),
+                        event.position.y.as_f32(),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 div()
                     .w_full()
@@ -2669,7 +2739,7 @@ impl MainView {
                             .border_1()
                             .border_color(palette.line)
                             .bg(palette.panel)
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::font_px(12.5))
                             .text_color(palette.text)
                             .child(dest.display().to_string()),
@@ -2745,7 +2815,7 @@ impl MainView {
                 )
                 .child(
                     div()
-                        .font_family("Cascadia Mono")
+                        .font_family(crate::theme::mono_font_family())
                         .text_size(crate::theme::font_px(12.5))
                         .text_color(palette.muted)
                         .child(detail),

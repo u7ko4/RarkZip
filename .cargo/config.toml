@@ -1,0 +1,7 @@
+# Overrides the machine-wide git mirror (which is slow here) with the rsproxy
+# sparse index; its CDN is reachable from this network, unlike static.crates.io.
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"

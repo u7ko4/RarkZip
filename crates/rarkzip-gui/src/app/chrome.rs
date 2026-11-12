@@ -226,9 +226,37 @@ impl MainView {
             .border_b_1()
             .border_color(palette.line)
             .child(left)
-            .child(div().flex_1().h_full().when(self.custom_titlebar, |this| {
-                this.window_control_area(WindowControlArea::Drag)
-            }))
+            .child({
+                let drag_area = div()
+                    .id("top-drag-area")
+                    .flex_1()
+                    .h_full()
+                    .when(self.custom_titlebar, |this| {
+                        this.window_control_area(WindowControlArea::Drag)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.open_context_menu(
+                                ContextTarget::Titlebar,
+                                None,
+                                event.position.x.as_f32(),
+                                event.position.y.as_f32(),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        }),
+                    );
+                // X11/Wayland 不处理 WindowControlArea 的命中测试，直接调用
+                // 平台的移动/最大化接口。
+                #[cfg(not(target_os = "windows"))]
+                let drag_area = drag_area
+                    .on_mouse_down(MouseButton::Left, |_, window, _| {
+                        window.start_window_move();
+                    })
+                    .on_double_click(|_, window, _| window.zoom_window());
+                drag_area
+            })
             .child(task_icon)
             .child(
                 icon_button("top-theme", IconName::Contrast, "切换浅色/暗色主题")
@@ -295,8 +323,9 @@ impl MainView {
             .bg(palette.bar)
             .border_b_1()
             .border_color(palette.line)
-            .child(
-                div()
+            .child({
+                let drag_area = div()
+                    .id("feature-drag-area")
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -317,8 +346,15 @@ impl MainView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
                             .child(feature.title()),
-                    ),
-            )
+                    );
+                #[cfg(not(target_os = "windows"))]
+                let drag_area = drag_area
+                    .on_mouse_down(MouseButton::Left, |_, window, _| {
+                        window.start_window_move();
+                    })
+                    .on_double_click(|_, window, _| window.zoom_window());
+                drag_area
+            })
             .child(
                 div()
                     .flex()
@@ -430,6 +466,19 @@ impl MainView {
             .bg(palette.bg)
             .border_b_1()
             .border_color(palette.line)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.open_context_menu(
+                        ContextTarget::AddressBar,
+                        None,
+                        event.position.x.as_f32(),
+                        event.position.y.as_f32(),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 Button::new("addr-up")
                     .child(icon(IconName::ArrowUpToLine, palette.sub, 18.0))

@@ -633,11 +633,21 @@ impl Settings {
 }
 
 pub fn data_dir() -> PathBuf {
+    #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
         .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(".rarkzip"));
+
+    // Linux/macOS 遵循 XDG：$XDG_CONFIG_HOME，否则 $HOME/.config。
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".rarkzip"));
+
     base.join("RarkZip")
 }
 

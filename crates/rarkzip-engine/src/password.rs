@@ -132,6 +132,14 @@ impl PasswordBook {
             .map_err(|error| EngineError::Other(error.to_string()))?;
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(to_extended(&tmp), bytes)?;
+        // 非 Windows 没有 DPAPI，密码以 base64 明文回退保存；
+        // 至少把文件权限收紧到仅当前用户可读写。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                std::fs::set_permissions(to_extended(&tmp), std::fs::Permissions::from_mode(0o600));
+        }
         std::fs::rename(to_extended(&tmp), to_extended(&self.path))?;
         Ok(())
     }

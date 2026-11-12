@@ -1,6 +1,8 @@
-//! 压缩包内文件/文件夹右键菜单。
+//! 应用内右键菜单：条目、目录树、地址栏、开始页与标题栏。
 
 use std::rc::Rc;
+
+use gpui_kit::ClipboardItem;
 
 use crate::app::*;
 
@@ -18,6 +20,7 @@ impl MainView {
         let indices = self.selected_indices();
         let has_selection = !indices.is_empty();
         let single = indices.len() == 1;
+        let has_archive = self.archive.is_some();
         let is_zip = self
             .archive
             .as_ref()
@@ -197,7 +200,7 @@ impl MainView {
                         cx,
                     ));
             }
-            ContextTarget::Blank => {
+            ContextTarget::Blank | ContextTarget::TreeBlank => {
                 rows += 5;
                 panel = panel
                     .child(self.context_menu_item(
@@ -262,6 +265,157 @@ impl MainView {
                         Some("Ctrl+V"),
                         is_zip,
                         |this, _, cx| this.paste_clipboard_entries(cx),
+                        cx,
+                    ));
+            }
+            ContextTarget::AddressBar => {
+                let archive_path = self
+                    .archive
+                    .as_ref()
+                    .map(|archive| archive.path.display().to_string());
+                let current_path = archive_path.clone().map(|path| {
+                    if self.current_dir.is_empty() {
+                        path
+                    } else {
+                        format!("{path}/{}", self.current_dir.trim_end_matches('/'))
+                    }
+                });
+                rows += 3;
+                panel = panel
+                    .child(self.context_menu_item(
+                        "ctx-addr-copy-archive",
+                        "复制压缩包路径",
+                        None,
+                        archive_path.is_some(),
+                        move |this, _, cx| {
+                            if let Some(path) = archive_path.clone() {
+                                cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                this.show_toast("已复制压缩包路径", ToastKind::Success, cx);
+                            }
+                        },
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-addr-copy-current",
+                        "复制当前位置路径",
+                        None,
+                        current_path.is_some(),
+                        move |this, _, cx| {
+                            if let Some(path) = current_path.clone() {
+                                cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                this.show_toast("已复制当前位置路径", ToastKind::Success, cx);
+                            }
+                        },
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-addr-reveal",
+                        "打开所在位置",
+                        None,
+                        has_archive,
+                        |this, _, _| this.reveal_archive(),
+                        cx,
+                    ));
+                panel = panel.child(self.context_separator(&palette));
+                separators += 1;
+                rows += 1;
+                panel = panel.child(self.context_menu_item(
+                    "ctx-addr-refresh",
+                    "刷新",
+                    None,
+                    has_archive,
+                    |this, _, cx| this.reload_archive(cx),
+                    cx,
+                ));
+            }
+            ContextTarget::StartPage => {
+                rows += 3;
+                panel = panel
+                    .child(self.context_menu_item(
+                        "ctx-start-open",
+                        "打开压缩包…",
+                        Some("Ctrl+O"),
+                        true,
+                        |this, window, cx| this.open_file_dialog(window, cx),
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-start-new",
+                        "新建压缩包…",
+                        Some("Ctrl+N"),
+                        true,
+                        |this, window, cx| this.open_new_archive_modal(window, cx),
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-start-settings",
+                        "设置…",
+                        None,
+                        true,
+                        |this, _, cx| {
+                            this.page = Page::Settings;
+                            cx.notify();
+                        },
+                        cx,
+                    ));
+            }
+            ContextTarget::Titlebar => {
+                let maximized = window.is_maximized();
+                rows += 4;
+                panel = panel
+                    .child(self.context_menu_item(
+                        "ctx-title-open",
+                        "打开压缩包…",
+                        Some("Ctrl+O"),
+                        true,
+                        |this, window, cx| this.open_file_dialog(window, cx),
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-title-new",
+                        "新建压缩包…",
+                        Some("Ctrl+N"),
+                        true,
+                        |this, window, cx| this.open_new_archive_modal(window, cx),
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-title-settings",
+                        "设置…",
+                        None,
+                        true,
+                        |this, _, cx| {
+                            this.page = Page::Settings;
+                            cx.notify();
+                        },
+                        cx,
+                    ));
+                panel = panel.child(self.context_separator(&palette));
+                separators += 1;
+                rows += 3;
+                panel = panel
+                    .child(self.context_menu_item(
+                        "ctx-title-min",
+                        "最小化",
+                        None,
+                        true,
+                        |_, window, _| window.minimize_window(),
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-title-max",
+                        if maximized { "还原" } else { "最大化" },
+                        None,
+                        true,
+                        |_, window, _| window.zoom_window(),
+                        cx,
+                    ))
+                    .child(self.context_menu_item(
+                        "ctx-title-close",
+                        "关闭窗口",
+                        Some("Alt+F4"),
+                        true,
+                        |_, window, _| window.remove_window(),
                         cx,
                     ));
             }

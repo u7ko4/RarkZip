@@ -20,7 +20,6 @@ encoding_rs = "0.8.35"
 filetime = "0.2.29"
 flate2 = "1.1.10"
 globset = "0.4.19"
-libdeflater = "1.22"
 libmkiso = "0.1.5"
 lzma-rust2 = { version = "0.16", features = ["std", "encoder"] }
 md-5 = "0.10"
@@ -37,12 +36,17 @@ thiserror = "2.0.21"
 trash = "5.2.9"
 unrar-ng = "0.7.7"
 walkdir = "2.5.0"
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Antimalware"] }
 xxhash-rust = { version = "0.8.19", features = ["xxh64"] }
 xz2 = "0.1.7"
 zip = "7.3.0"
 zpaq_rs = "1.0.4"
 zstd = "0.14.3"
+
+[target.'cfg(windows)'.dependencies]
+# libdeflate 的 C 代码在 Linux 上会生成旧 binutils 无法汇编的 AVX512-VNNI
+# 指令，因此只在 Windows 使用；其他平台回退到纯 Rust 的 flate2。
+libdeflater = "1.22"
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Antimalware"] }
 
 [dev-dependencies]
 

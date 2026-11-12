@@ -12,3 +12,9 @@
 /.zcode
 # Local regression/build helper scripts
 /scripts
+# Local, writable Cargo home used when ~/.cargo is read-only
+/.cargo-home
+# Manual Linux port smoke-test output
+/port-test
+# Locally extracted Xvfb/Weston used for headless GUI verification
+/.tools

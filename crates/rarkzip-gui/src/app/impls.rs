@@ -669,13 +669,32 @@ impl MainView {
             self.show_toast("选中条目没有可复制的文件", ToastKind::Info, cx);
             return;
         }
-        match crate::clipboard::set_file_list(&files) {
+        match crate::clipboard::set_file_list(cx, &files) {
             Ok(()) => self.show_toast(
                 format!("已复制 {} 个条目到剪贴板", files.len()),
                 ToastKind::Success,
                 cx,
             ),
             Err(error) => self.show_toast(format!("复制失败：{error}"), ToastKind::Error, cx),
+        }
+    }
+
+    /// 在系统文件管理器中定位当前压缩包。
+    pub(super) fn reveal_archive(&mut self) {
+        let Some(path) = self.archive.as_ref().map(|archive| archive.path.clone()) else {
+            return;
+        };
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("explorer.exe")
+                .arg(format!("/select,{}", path.display()))
+                .spawn();
+        }
+        #[cfg(not(windows))]
+        {
+            if let Some(parent) = path.parent() {
+                let _ = open::that(parent);
+            }
         }
     }
 
@@ -687,7 +706,7 @@ impl MainView {
             self.show_toast("当前仅支持向 ZIP 粘贴条目", ToastKind::Info, cx);
             return;
         }
-        let files = match crate::clipboard::file_list() {
+        let files = match crate::clipboard::file_list(cx) {
             Ok(files) => files,
             Err(error) => {
                 self.show_toast(format!("读取剪贴板失败：{error}"), ToastKind::Error, cx);

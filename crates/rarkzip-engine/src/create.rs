@@ -4,6 +4,7 @@ use std::io::{self, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Local, Timelike};
+#[cfg(windows)]
 use libdeflater::{CompressionLvl, Compressor};
 use lzma_rust2::{LzmaOptions, LzmaWriter};
 use serde::{Deserialize, Serialize};
@@ -275,9 +276,12 @@ fn sfx_stub() -> Result<PathBuf> {
         return Ok(current);
     }
     if let Some(parent) = current.parent() {
-        let candidate = parent.join("rarkzip.exe");
-        if candidate.exists() {
-            return Ok(candidate);
+        // Windows 使用 rarkzip.exe；Linux/macOS 的可执行文件没有扩展名。
+        for name in ["rarkzip.exe", "rarkzip"] {
+            let candidate = parent.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
         }
     }
     Err(EngineError::Other(
@@ -541,6 +545,37 @@ impl<W: Write> Write for CountingWriter<W> {
     }
 }
 
+/// 原始 Deflate 压缩（不带 zlib 头），供手写 ZIP 本地头使用。
+///
+/// Windows 使用 libdeflate（更快）；其他平台使用纯 Rust 的 flate2，
+/// 避免 libdeflate 的 C 代码在旧 binutils 上生成 AVX512-VNNI 指令。
+#[cfg(windows)]
+fn deflate_raw(data: &[u8], level: u8) -> Result<Vec<u8>> {
+    let compression_level = CompressionLvl::new(level as i32).unwrap_or_default();
+    let mut compressor = Compressor::new(compression_level);
+    let bound = compressor.deflate_compress_bound(data.len());
+    let mut compressed = vec![0u8; bound];
+    let written = compressor
+        .deflate_compress(data, &mut compressed)
+        .map_err(|error| EngineError::Other(format!("Deflate 压缩失败：{error:?}")))?;
+    compressed.truncate(written);
+    Ok(compressed)
+}
+
+#[cfg(not(windows))]
+fn deflate_raw(data: &[u8], level: u8) -> Result<Vec<u8>> {
+    use flate2::write::DeflateEncoder;
+    use flate2::Compression;
+
+    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::new(level as u32));
+    encoder
+        .write_all(data)
+        .map_err(|error| EngineError::Other(format!("Deflate 压缩失败：{error}")))?;
+    encoder
+        .finish()
+        .map_err(|error| EngineError::Other(format!("Deflate 压缩失败：{error}")))
+}
+
 /// 快速抽样判断数据是否基本不可压缩。随机数据、已压缩媒体直接 Store，
 /// 避免为 100 MB 级随机文件白跑一遍 Deflate。
 fn looks_incompressible(data: &[u8]) -> bool {
@@ -551,16 +586,13 @@ fn looks_incompressible(data: &[u8]) -> bool {
     let mut offsets = vec![0usize, data.len() / 2, data.len() - SAMPLE];
     offsets.sort_unstable();
     offsets.dedup();
-    let mut compressor = Compressor::new(CompressionLvl::new(1).unwrap_or_default());
     let mut raw_total = 0usize;
     let mut compressed_total = 0usize;
     for offset in offsets {
         let slice = &data[offset..offset + SAMPLE];
-        let bound = compressor.deflate_compress_bound(slice.len());
-        let mut output = vec![0u8; bound];
-        if let Ok(written) = compressor.deflate_compress(slice, &mut output) {
+        if let Ok(compressed) = deflate_raw(slice, 1) {
             raw_total += slice.len();
-            compressed_total += written;
+            compressed_total += compressed.len();
         }
     }
     raw_total > 0 && compressed_total * 100 >= raw_total * 98
@@ -594,14 +626,7 @@ fn prepare_zip_entry(
             uncompressed_size,
         });
     }
-    let compression_level = CompressionLvl::new(level as i32).unwrap_or_default();
-    let mut compressor = Compressor::new(compression_level);
-    let bound = compressor.deflate_compress_bound(data.len());
-    let mut compressed = vec![0u8; bound];
-    let written = compressor
-        .deflate_compress(&data, &mut compressed)
-        .map_err(|error| EngineError::Other(format!("Deflate 压缩失败：{error:?}")))?;
-    compressed.truncate(written);
+    let compressed = deflate_raw(&data, level)?;
     if compressed.len() >= data.len() {
         Ok(PreparedZipFile {
             data,

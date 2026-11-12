@@ -12,6 +12,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::Icon;
+use gpui_kit::component::InteractiveElementExt;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -1262,8 +1263,9 @@ impl QuickView {
             .bg(palette.bar)
             .border_b_1()
             .border_color(palette.line)
-            .child(
-                div()
+            .child({
+                let drag_area = div()
+                    .id("quick-drag-area")
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -1283,8 +1285,15 @@ impl QuickView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
                             .child(title),
-                    ),
-            )
+                    );
+                #[cfg(not(target_os = "windows"))]
+                let drag_area = drag_area
+                    .on_mouse_down(MouseButton::Left, |_, window, _| {
+                        window.start_window_move();
+                    })
+                    .on_double_click(|_, window, _| window.zoom_window());
+                drag_area
+            })
             .child(
                 div()
                     .flex()
@@ -1393,8 +1402,10 @@ impl QuickView {
                 entries.push((name, path));
             }
         };
-        if let Some(profile) = std::env::var_os("USERPROFILE") {
-            let profile = PathBuf::from(profile);
+        let profile = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from);
+        if let Some(profile) = profile.as_ref() {
             for (label, folder) in [
                 ("桌面", "Desktop"),
                 ("下载", "Downloads"),
@@ -1403,9 +1414,41 @@ impl QuickView {
                 push(label.to_string(), profile.join(folder));
             }
         }
+        // Linux/macOS：优先使用 XDG user-dirs 配置，兼容本地化目录名
+        // （例如中文系统的 ~/桌面、~/下载）。
+        #[cfg(not(windows))]
+        if let Some(profile) = profile.as_ref() {
+            let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .unwrap_or_else(|| profile.join(".config"));
+            if let Ok(text) = std::fs::read_to_string(config_dir.join("user-dirs.dirs")) {
+                for (label, key) in [
+                    ("桌面", "XDG_DESKTOP_DIR"),
+                    ("下载", "XDG_DOWNLOAD_DIR"),
+                    ("文档", "XDG_DOCUMENTS_DIR"),
+                ] {
+                    let value = text.lines().find_map(|line| {
+                        let rest = line.trim().strip_prefix(key)?;
+                        let rest = rest.strip_prefix('=')?.trim();
+                        Some(rest.trim_matches('"').to_string())
+                    });
+                    if let Some(value) = value {
+                        let path = match value.strip_prefix("$HOME") {
+                            Some(rest) => profile.join(rest.trim_start_matches('/')),
+                            None => PathBuf::from(value),
+                        };
+                        push(label.to_string(), path);
+                    }
+                }
+            }
+            push("主目录".to_string(), profile.clone());
+            push("根目录".to_string(), PathBuf::from("/"));
+        }
         if let Some(parent) = self.archive_path().and_then(Path::parent) {
             push("压缩包所在位置".to_string(), parent.to_path_buf());
         }
+        #[cfg(windows)]
         for letter in b'A'..=b'Z' {
             let root = PathBuf::from(format!("{}:\\", letter as char));
             if root.is_dir() {
@@ -1698,7 +1741,7 @@ impl QuickView {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::caption())
                             .text_color(palette.text)
                             .child(self.subtitle()),
@@ -1860,7 +1903,7 @@ impl QuickView {
                     .w_full()
                     .min_w_0()
                     .truncate()
-                    .font_family("Cascadia Mono")
+                    .font_family(crate::theme::mono_font_family())
                     .text_size(crate::theme::caption())
                     .text_color(palette.accent)
                     .child(conflict.target_path.display().to_string()),
@@ -2025,7 +2068,7 @@ impl QuickView {
                         .border_1()
                         .border_color(palette.line)
                         .bg(palette.panel)
-                        .font_family("Cascadia Mono")
+                        .font_family(crate::theme::mono_font_family())
                         .text_size(crate::theme::caption())
                         .text_color(palette.sub)
                         .child(conflict.name.clone()),
@@ -2309,7 +2352,7 @@ impl QuickView {
                             .border_1()
                             .border_color(palette.line)
                             .bg(palette.panel)
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::caption())
                             .text_color(palette.sub)
                             .truncate()
@@ -2602,7 +2645,7 @@ impl Render for QuickView {
         let title = self.title();
         window.set_window_title(&title);
         let titlebar = self.custom_titlebar.then(|| self.render_titlebar(window));
-        div()
+        let root = div()
             .id("quick-root")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -2622,7 +2665,12 @@ impl Render for QuickView {
             .font_family(crate::theme::ui_font_family())
             .when_some(titlebar, |this, titlebar| this.child(titlebar))
             .child(self.render_body(window, cx))
-            .into_any_element()
+            .into_any_element();
+
+        if !self.custom_titlebar {
+            return root;
+        }
+        crate::design::window_frame(window.window_decorations(), root)
     }
 }
 

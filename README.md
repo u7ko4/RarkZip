@@ -54,6 +54,26 @@ Build outputs:
 
 To use Explorer integration, keep `rarkzip_shell.dll` in the same directory as `rarkzip.exe`.
 
+### Linux
+
+The archive engine, the `bx` CLI, and the GPUI desktop UI also build and run on Linux (X11 or Wayland). Explorer integration, DPAPI password protection, AMSI scanning, and Mark-of-the-Web propagation are Windows-only; on other platforms they are compiled out or degrade gracefully.
+
+Build dependencies on Debian/Ubuntu:
+
+```bash
+sudo apt install build-essential pkg-config libxkbcommon-dev libwayland-dev \
+  libx11-xcb-dev libfontconfig1-dev libvulkan-dev libegl1-mesa-dev
+```
+
+Then run the same `cargo build --release --workspace` command. The outputs are `target/release/rarkzip` and `target/release/bx` (without `.exe`); `rarkzip_shell` has no effect outside Windows.
+
+Platform notes:
+
+- The password book falls back to a `0600` JSON file when DPAPI is unavailable. It is effectively plaintext at rest, so protect it with filesystem permissions.
+- WIM, CAB, ARJ, and ASAR extraction needs `7z`, `7zz`, or `7za` on `PATH`, or set `RARKZIP_7Z` to the executable.
+- SFX ZIP creation is Windows-oriented; use regular ZIP, 7z, or TAR archives on other platforms.
+- This checkout's `.cargo/config.toml` selects the rsproxy.cn sparse registry mirror. Adjust or remove it if crates.io is reachable from your network.
+
 ## Usage
 
 Launch the desktop application:

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use gpui_kit::component::slider::Slider;
@@ -42,13 +43,30 @@ impl MainView {
         let current = self.current_dir.clone();
         let expanded = self.expanded.clone();
 
+        let index_by_path: HashMap<String, usize> = archive
+            .info
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.path.trim_end_matches('/').to_string(), index))
+            .collect();
+
         let mut children =
             vec![self.tree_node("", &root_name, 0, current.is_empty(), true, true, cx)];
         let mut keys: Vec<String> = tree.children.keys().cloned().collect();
         keys.sort();
         for key in keys {
             if let Some(child) = tree.children.get(&key) {
-                push_tree_rows(child, &mut children, 1, &current, &expanded, &palette, cx);
+                push_tree_rows(
+                    child,
+                    &mut children,
+                    1,
+                    &current,
+                    &expanded,
+                    &palette,
+                    &index_by_path,
+                    cx,
+                );
             }
         }
 
@@ -70,6 +88,19 @@ impl MainView {
                     .p(px(8.0))
                     .flex_1()
                     .overflow_y_scroll()
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.open_context_menu(
+                                ContextTarget::TreeBlank,
+                                None,
+                                event.position.x.as_f32(),
+                                event.position.y.as_f32(),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        }),
+                    )
                     .children(children),
             )
             .when(self.archive.is_some(), |this| {
@@ -105,6 +136,15 @@ impl MainView {
     ) -> AnyElement {
         let palette = self.palette;
         let path_owned = path.to_string();
+        // 树节点路径与归档条目一一对应；根节点没有条目，使用归档级菜单。
+        let menu_index = self.archive.as_ref().and_then(|archive| {
+            let needle = path.trim_end_matches('/');
+            archive
+                .info
+                .entries
+                .iter()
+                .position(|entry| entry.path.trim_end_matches('/') == needle)
+        });
         div()
             .id(format!("tree-{path}"))
             .flex()
@@ -132,6 +172,22 @@ impl MainView {
                 }
                 cx.notify();
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    let target = menu_index
+                        .map(ContextTarget::Row)
+                        .unwrap_or(ContextTarget::TreeBlank);
+                    this.open_context_menu(
+                        target,
+                        menu_index,
+                        event.position.x.as_f32(),
+                        event.position.y.as_f32(),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 div()
                     .w(px(12.0))
@@ -1433,6 +1489,7 @@ impl MainView {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_tree_rows(
     node: &DirNode,
     out: &mut Vec<AnyElement>,
@@ -1440,8 +1497,10 @@ fn push_tree_rows(
     current: &str,
     expanded: &HashSet<String>,
     palette: &Palette,
+    index_by_path: &HashMap<String, usize>,
     cx: &mut Context<MainView>,
 ) {
+    let menu_index = index_by_path.get(node.path.trim_end_matches('/')).copied();
     let label = node
         .path
         .rsplit('/')
@@ -1481,6 +1540,22 @@ fn push_tree_rows(
                 }
                 cx.notify();
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    let target = menu_index
+                        .map(ContextTarget::Row)
+                        .unwrap_or(ContextTarget::TreeBlank);
+                    this.open_context_menu(
+                        target,
+                        menu_index,
+                        event.position.x.as_f32(),
+                        event.position.y.as_f32(),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 div()
                     .w(px(12.0))
@@ -1516,7 +1591,16 @@ fn push_tree_rows(
         keys.sort();
         for key in keys {
             if let Some(child) = node.children.get(&key) {
-                push_tree_rows(child, out, depth + 1, current, expanded, palette, cx);
+                push_tree_rows(
+                    child,
+                    out,
+                    depth + 1,
+                    current,
+                    expanded,
+                    palette,
+                    index_by_path,
+                    cx,
+                );
             }
         }
     }

@@ -57,7 +57,36 @@ pub fn title() -> Pixels {
 }
 
 pub fn ui_font_family() -> &'static str {
-    "Microsoft YaHei UI"
+    #[cfg(windows)]
+    {
+        "Microsoft YaHei UI"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "PingFang SC"
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        // 常见 Linux 发行版均提供 Noto Sans CJK；缺失时 GPUI 会回退到
+        // DejaVu Sans / Noto Sans 等系统字体。
+        "Noto Sans CJK SC"
+    }
+}
+
+/// 等宽字体：哈希、校验和与日志等需要对齐的场景使用。
+pub fn mono_font_family() -> &'static str {
+    #[cfg(windows)]
+    {
+        "Cascadia Mono"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "Menlo"
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        "DejaVu Sans Mono"
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,7 +351,7 @@ pub fn apply(cx: &mut App, dark: bool, skin: Skin) {
     );
     Theme::update(cx, |theme| {
         theme.font_family = ui_font_family().into();
-        theme.mono_font_family = "Cascadia Mono".into();
+        theme.mono_font_family = mono_font_family().into();
         theme.font_size = px(ui_font_size());
         theme.mono_font_size = px((ui_font_size() - 0.5).max(9.0));
         theme.radius = px(8.0);

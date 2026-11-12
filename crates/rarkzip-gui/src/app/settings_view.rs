@@ -117,10 +117,35 @@ impl MainView {
                 .gap(px(12.0))
                 .child(design::link_action(
                     "assoc-open-settings",
-                    "Windows - 设置默认程序",
+                    if cfg!(windows) {
+                        "Windows - 设置默认程序"
+                    } else {
+                        "系统默认应用"
+                    },
                     &palette,
                     cx.listener(|this, _, _, cx| {
-                        if let Err(error) = open::that("ms-settings:defaultapps") {
+                        #[cfg(windows)]
+                        let result = open::that("ms-settings:defaultapps");
+                        #[cfg(not(windows))]
+                        let result = std::process::Command::new("cinnamon-settings")
+                            .arg("default")
+                            .spawn()
+                            .map(|_| ())
+                            .or_else(|_| {
+                                let path = std::env::var_os("XDG_CONFIG_HOME")
+                                    .map(std::path::PathBuf::from)
+                                    .or_else(|| {
+                                        std::env::var_os("HOME").map(|home| {
+                                            std::path::PathBuf::from(home).join(".config")
+                                        })
+                                    })
+                                    .map(|config| config.join("mimeapps.list"));
+                                match path {
+                                    Some(path) => open::that(path),
+                                    None => Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+                                }
+                            });
+                        if let Err(error) = result {
                             this.show_toast(
                                 format!("无法打开系统设置：{error}"),
                                 ToastKind::Error,
@@ -585,7 +610,7 @@ impl MainView {
                 div()
                     .w(px(56.0))
                     .text_center()
-                    .font_family("Cascadia Mono")
+                    .font_family(crate::theme::mono_font_family())
                     .text_size(crate::theme::font_px(12.5))
                     .text_color(palette.sub)
                     .child(format!("{icon_size:.0} px")),
@@ -624,7 +649,7 @@ impl MainView {
                 div()
                     .w(px(56.0))
                     .text_center()
-                    .font_family("Cascadia Mono")
+                    .font_family(crate::theme::mono_font_family())
                     .text_size(crate::theme::font_px(12.5))
                     .text_color(palette.sub)
                     .child(format!("{bar_height:.0} px")),
@@ -655,7 +680,7 @@ impl MainView {
                 div()
                     .w(px(56.0))
                     .text_center()
-                    .font_family("Cascadia Mono")
+                    .font_family(crate::theme::mono_font_family())
                     .text_size(crate::theme::font_px(12.5))
                     .text_color(palette.sub)
                     .child(format!("{font_size:.0} px")),
@@ -988,7 +1013,7 @@ impl MainView {
                         div()
                             .max_w(px(420.0))
                             .truncate()
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::font_px(12.0))
                             .text_color(palette.muted)
                             .child(temp_label),
@@ -1011,7 +1036,7 @@ impl MainView {
                         div()
                             .max_w(px(420.0))
                             .truncate()
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::font_px(12.0))
                             .text_color(palette.muted)
                             .child(data_dir.display().to_string()),
@@ -1472,7 +1497,20 @@ impl MainView {
     fn settings_context_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
         let installed = rarkzip_shell::is_installed(rarkzip_shell::ShellScope::CurrentUser);
+        #[cfg(windows)]
         let preview_installed = rarkzip_shell::preview_handler_installed();
+        let backends = rarkzip_shell::context_menu_backends();
+        let supported = !backends.is_empty();
+        let backend_label = if backends.is_empty() {
+            "系统右键菜单".to_string()
+        } else {
+            format!("{} 右键菜单", backends.join(" / "))
+        };
+        let file_manager = if cfg!(windows) {
+            "资源管理器"
+        } else {
+            "文件管理器"
+        };
         let disabled = self.settings.integration.disable_menu;
         let double_click = self.settings.integration.double_click.clone();
         let custom_folder = self.settings.integration.double_click_folder.clone();
@@ -1521,7 +1559,7 @@ impl MainView {
                             .text_size(crate::theme::font_px(14.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
-                            .child("经典资源管理器菜单"),
+                            .child(backend_label),
                     )
                     .child(
                         div()
@@ -1529,15 +1567,31 @@ impl MainView {
                             .text_color(palette.muted)
                             .child(if disabled {
                                 "右键菜单已禁用；文件关联仍然保留"
+                            } else if installed {
+                                if cfg!(windows) {
+                                    "已写入当前用户配置，无需管理员权限；更改即时生效"
+                                } else {
+                                    "已写入当前用户配置；重启文件管理器后生效"
+                                }
+                            } else if supported {
+                                "写入当前用户配置，无需管理员权限"
+                            } else if cfg!(windows) {
+                                "需要 Windows 资源管理器"
                             } else {
-                                "写入 HKCU，无需管理员权限；更改即时生效"
+                                "未检测到受支持的文件管理器（Nemo、Nautilus 或 Dolphin）"
                             }),
                     ),
             )
             .child(design::tag(
                 &palette,
-                if installed { "已注册" } else { "未注册" },
-                if installed {
+                if !supported {
+                    "不受支持"
+                } else if installed {
+                    "已注册"
+                } else {
+                    "未注册"
+                },
+                if installed && supported {
                     design::TagTone::Ok
                 } else {
                     design::TagTone::Neutral
@@ -1598,7 +1652,7 @@ impl MainView {
                     "注册右键菜单",
                     IconName::ShieldCheck,
                     &palette,
-                    false,
+                    !supported,
                     cx.listener(|this, _, _, cx| {
                         this.settings.integration.disable_menu = false;
                         this.save_settings();
@@ -1617,6 +1671,14 @@ impl MainView {
                 )
                 .into_any_element()
             });
+
+        #[cfg(not(windows))]
+        let menu_note = design::info_note(
+            &palette,
+            "文件管理器菜单由用户级动作/扩展实现；安装或修改后请重启文件管理器使其重新加载。",
+        );
+        #[cfg(windows)]
+        let menu_note = div().into_any_element();
 
         let mut double_rows = div().flex().flex_col();
         for (key, title, description) in DOUBLE_CLICK_OPTIONS.iter() {
@@ -1652,7 +1714,7 @@ impl MainView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .font_family("Cascadia Mono")
+                    .font_family(crate::theme::mono_font_family())
                     .text_size(crate::theme::font_px(12.5))
                     .text_color(if custom_folder.trim().is_empty() {
                         palette.muted
@@ -1722,6 +1784,11 @@ impl MainView {
         );
         let mut extract_rows = Vec::new();
         for (key, title) in EXTRACT_MENU_OPTIONS.iter() {
+            // 预览处理器是 Windows Shell 扩展。
+            #[cfg(not(windows))]
+            if *key == "preview" {
+                continue;
+            }
             let key_owned = key.to_string();
             let checked = extract_keys.iter().any(|item| item.as_str() == *key);
             extract_rows.push(menu_check_row(
@@ -1750,9 +1817,10 @@ impl MainView {
                 }),
             ));
         }
+        #[cfg(windows)]
         extract_rows.push(menu_check_row(
             &palette,
-            "cm-extract-preview",
+            "cm-extract-preview-handler",
             preview_installed,
             "预览压缩文件",
             cx.listener(|this, _, _, cx| {
@@ -1876,12 +1944,8 @@ impl MainView {
         }
         let compress_card = design::card(&palette).child(menu_grid(&palette, compress_rows, 2));
 
-        let empty_head = menu_group_head(
-            &palette,
-            "空白处右键菜单",
-            "在资源管理器空白处单击右键时显示",
-            Vec::new(),
-        );
+        let empty_hint = format!("在{file_manager}空白处单击右键时显示");
+        let empty_head = menu_group_head(&palette, "空白处右键菜单", &empty_hint, Vec::new());
         let mut empty_rows = Vec::new();
         for (key, title) in EMPTY_MENU_OPTIONS.iter() {
             let key_owned = key.to_string();
@@ -1974,19 +2038,23 @@ impl MainView {
         ];
         let other_card = design::card(&palette).child(menu_grid(&palette, other_rows, 2));
 
+        #[cfg(windows)]
         let preview_note = design::info_note(
             &palette,
             "预览处理器需要 rarkzip_shell.dll 与 rarkzip.exe 放在同一目录。",
         );
+        #[cfg(not(windows))]
+        let preview_note = div().into_any_element();
 
         div()
             .flex()
             .flex_col()
             .child(status_card)
+            .child(menu_note)
             .child(menu_group_head(
                 &palette,
                 "双击动作",
-                "在资源管理器中双击压缩包时执行的操作",
+                format!("在{file_manager}中双击压缩包时执行的操作"),
                 Vec::new(),
             ))
             .child(double_card)
@@ -2168,7 +2236,11 @@ impl MainView {
             .text_size(crate::theme::font_px(12.5))
             .text_color(palette.muted)
             .child(icon(IconName::Info, palette.muted, 14.0))
-            .child("注册的是「打开方式」候选，不强制覆盖 Windows 用户默认选择；被接管的格式关联后会自动切换为 RarkZip。");
+            .child(if cfg!(windows) {
+                "注册的是「打开方式」候选，不强制覆盖 Windows 用户默认选择；被接管的格式关联后会自动切换为 RarkZip。"
+            } else {
+                "注册后 RarkZip 会出现在文件管理器的「打开方式」候选里，不强制覆盖系统默认应用。"
+            });
 
         let count = div()
             .flex()
@@ -2473,7 +2545,7 @@ const EMPTY_MENU_OPTIONS: &[(&str, &str)] =
 fn menu_group_head(
     palette: &Palette,
     title: &'static str,
-    hint: &'static str,
+    hint: impl Into<SharedString>,
     actions: Vec<AnyElement>,
 ) -> AnyElement {
     div()
@@ -2493,7 +2565,7 @@ fn menu_group_head(
             div()
                 .text_size(crate::theme::font_px(12.5))
                 .text_color(palette.muted)
-                .child(hint),
+                .child(hint.into()),
         )
         .child(div().flex_1())
         .children(actions)
@@ -2700,7 +2772,7 @@ fn association_chip(
         .items_center()
         .gap(px(8.0))
         .cursor_pointer()
-        .font_family("Cascadia Mono")
+        .font_family(crate::theme::mono_font_family())
         .text_size(crate::theme::font_px(12.5))
         .text_color(if selected { palette.text } else { palette.sub })
         .hover(|style| style.border_color(palette.accent).text_color(palette.text))
@@ -2768,16 +2840,20 @@ fn settings_page_subtitle(page: SettingsPage, language: Language) -> &'static st
         }
         SettingsPage::Associations => {
             if english {
-                "Choose RarkZip as an option for archives; Windows still decides the default app"
-            } else {
+                "Choose RarkZip as an option for archives; the system still decides the default app"
+            } else if cfg!(windows) {
                 "选择 RarkZip 作为压缩包的默认打开方式；注册的是「打开方式」候选，不强制覆盖 Windows 用户默认选择"
+            } else {
+                "选择 RarkZip 作为压缩包的打开方式候选；不强制覆盖系统默认应用"
             }
         }
         SettingsPage::ContextMenu => {
             if english {
-                "Manage RarkZip entries and double-click behavior in Explorer; changes apply immediately"
-            } else {
+                "Manage RarkZip entries and double-click behavior in the file manager; changes apply immediately"
+            } else if cfg!(windows) {
                 "管理 Windows 资源管理器右键菜单中 RarkZip 的入口与双击行为，更改即时生效"
+            } else {
+                "管理文件管理器右键菜单中 RarkZip 的入口与双击行为，修改后重启文件管理器生效"
             }
         }
         SettingsPage::Extraction => {

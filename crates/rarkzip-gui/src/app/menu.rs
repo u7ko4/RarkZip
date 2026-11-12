@@ -94,22 +94,7 @@ impl MainView {
                 "打开所在位置",
                 None,
                 has_archive,
-                |this, _, _| {
-                    if let Some(path) = this.archive.as_ref().map(|archive| archive.path.clone()) {
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = std::process::Command::new("explorer.exe")
-                                .arg(format!("/select,{}", path.display()))
-                                .spawn();
-                        }
-                        #[cfg(not(target_os = "windows"))]
-                        {
-                            if let Some(parent) = path.parent() {
-                                let _ = open::that(parent);
-                            }
-                        }
-                    }
-                },
+                |this, _, _| this.reveal_archive(),
                 cx,
             ))
             .child(self.menu_item(

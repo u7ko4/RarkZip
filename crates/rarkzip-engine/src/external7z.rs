@@ -32,7 +32,7 @@ fn find_exe() -> Option<PathBuf> {
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            for name in ["7z.exe", "7zz.exe", "7za.exe"] {
+            for name in ["7z.exe", "7zz.exe", "7za.exe", "7z", "7zz", "7za"] {
                 let candidate = parent.join(name);
                 if candidate.is_file() {
                     return Some(candidate);
@@ -46,14 +46,22 @@ fn find_exe() -> Option<PathBuf> {
         "C:\\Program Files\\NanaZip\\7z.exe",
         "/usr/bin/7z",
         "/usr/bin/7zz",
+        "/usr/bin/7zzs",
+        "/usr/bin/7za",
         "/usr/local/bin/7z",
+        "/usr/local/bin/7zz",
     ] {
         if Path::new(candidate).is_file() {
             return Some(PathBuf::from(candidate));
         }
     }
-    let status = Command::new("7z").arg("i").output();
-    status.ok().map(|_| PathBuf::from("7z"))
+    // 依次探测 PATH 中的 7z / 7zz，兼容不同发行版的命名。
+    for name in ["7z", "7zz", "7zzs"] {
+        if Command::new(name).arg("i").output().is_ok() {
+            return Some(PathBuf::from(name));
+        }
+    }
+    None
 }
 
 fn run(args: &[String]) -> Result<Output> {

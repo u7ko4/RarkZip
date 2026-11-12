@@ -1,10 +1,16 @@
-//! 系统剪贴板文件列表（CF_HDROP）读写。
+//! 系统剪贴板文件列表读写。
+//!
+//! Windows 使用 `CF_HDROP` 与资源管理器互通；Linux/macOS 通过 GPUI 的
+//! `ExternalPaths`（Wayland 的 `text/uri-list` 等）传递文件列表，并在
+//! 只有纯文本时按行/URI 解析路径。
 //!
 //! 复制归档条目时先解压到临时目录，再把实际文件路径放入剪贴板；粘贴时读取
-//! Explorer 复制的文件/文件夹路径，交给 ZIP 编辑接口追加。
+//! 文件管理器复制的文件/文件夹路径，交给 ZIP 编辑接口追加。
+
+use std::path::PathBuf;
 
 #[cfg(not(windows))]
-use std::path::PathBuf;
+use gpui_kit::App;
 
 #[cfg(windows)]
 mod platform {
@@ -139,14 +145,88 @@ mod platform {
 }
 
 #[cfg(windows)]
-pub use platform::{file_list, set_file_list};
+pub fn set_file_list(_cx: &mut gpui_kit::App, paths: &[PathBuf]) -> Result<(), String> {
+    platform::set_file_list(paths)
+}
 
-#[cfg(not(windows))]
-pub fn set_file_list(_paths: &[PathBuf]) -> Result<(), String> {
-    Err("当前平台不支持文件剪贴板".to_string())
+#[cfg(windows)]
+pub fn file_list(_cx: &mut gpui_kit::App) -> Result<Vec<PathBuf>, String> {
+    platform::file_list()
 }
 
 #[cfg(not(windows))]
-pub fn file_list() -> Result<Vec<PathBuf>, String> {
-    Err("当前平台不支持文件剪贴板".to_string())
+pub fn set_file_list(cx: &mut App, paths: &[PathBuf]) -> Result<(), String> {
+    use gpui_kit::{ClipboardEntry, ClipboardItem, ExternalPaths};
+
+    if paths.is_empty() {
+        return Err("没有可复制的文件".to_string());
+    }
+    cx.write_to_clipboard(ClipboardItem {
+        entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+            paths.iter().cloned().collect(),
+        ))],
+    });
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn file_list(cx: &mut App) -> Result<Vec<PathBuf>, String> {
+    use gpui_kit::ClipboardEntry;
+
+    let Some(item) = cx.read_from_clipboard() else {
+        return Ok(Vec::new());
+    };
+    let mut paths = Vec::new();
+    for entry in &item.entries {
+        if let ClipboardEntry::ExternalPaths(external) = entry {
+            paths.extend(external.0.iter().cloned());
+        }
+    }
+    if !paths.is_empty() {
+        return Ok(paths);
+    }
+    // 回退：部分文件管理器只提供 text/plain（file:// URI 或每行一个路径）。
+    if let Some(text) = item.text() {
+        for line in text.lines() {
+            let line = line.trim().trim_start_matches('\u{feff}');
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let path = if let Some(rest) = line.strip_prefix("file://") {
+                let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+                PathBuf::from(percent_decode(rest))
+            } else {
+                PathBuf::from(line)
+            };
+            if path.is_absolute() && path.exists() {
+                paths.push(path);
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// 解析 `text/uri-list` 中的百分号编码（例如 `%E4%B8%AD`）。
+#[cfg(not(windows))]
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && bytes[index + 1].is_ascii_hexdigit()
+            && bytes[index + 2].is_ascii_hexdigit()
+        {
+            let hex = &input[index + 1..index + 3];
+            if let Ok(value) = u8::from_str_radix(hex, 16) {
+                out.push(value);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

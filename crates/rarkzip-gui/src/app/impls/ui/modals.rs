@@ -376,7 +376,7 @@ impl MainView {
                         .py(px(9.0))
                         .rounded(px(crate::theme::RADIUS_CONTROL))
                         .bg(palette.panel)
-                        .font_family("Cascadia Mono")
+                        .font_family(crate::theme::mono_font_family())
                         .text_size(crate::theme::caption())
                         .text_color(palette.sub)
                         .child(old),
@@ -448,7 +448,7 @@ impl MainView {
                         .py(px(9.0))
                         .rounded(px(crate::theme::RADIUS_CONTROL))
                         .bg(palette.panel)
-                        .font_family("Cascadia Mono")
+                        .font_family(crate::theme::mono_font_family())
                         .text_size(crate::theme::caption())
                         .text_color(palette.sub)
                         .child(location),
@@ -729,7 +729,7 @@ impl MainView {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .font_family("Cascadia Mono")
+                                .font_family(crate::theme::mono_font_family())
                                 .text_size(crate::theme::body())
                                 .text_color(palette.text)
                                 .child(shown),
@@ -1081,7 +1081,7 @@ impl MainView {
                             .border_1()
                             .border_color(palette.line_strong)
                             .bg(palette.panel)
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::caption())
                             .text_color(if self.recovery_path.is_some() {
                                 palette.sub
@@ -1256,7 +1256,7 @@ impl MainView {
                         .items_center()
                         .gap(px(8.0))
                         .min_w_0()
-                        .font_family("Cascadia Mono")
+                        .font_family(crate::theme::mono_font_family())
                         .text_size(crate::theme::caption())
                         .text_color(palette.text)
                         .child(icon(IconName::FileText, palette.accent, 16.0))
@@ -1536,7 +1536,7 @@ impl MainView {
                                     .py(px(9.0))
                                     .rounded(px(crate::theme::RADIUS_CONTROL))
                                     .bg(palette.ok_soft)
-                                    .font_family("Cascadia Mono")
+                                    .font_family(crate::theme::mono_font_family())
                                     .text_size(crate::theme::body())
                                     .text_color(palette.ok)
                                     .child(password.clone()),
@@ -1868,7 +1868,7 @@ impl MainView {
                             .w(px(54.0))
                             .flex_shrink_0()
                             .text_center()
-                            .font_family("Cascadia Mono")
+                            .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::caption())
                             .text_color(palette.sub)
                             .child(format!("{width:.0}px")),
@@ -2600,7 +2600,7 @@ impl MainView {
                             .text_size(crate::theme::caption())
                             .text_color(hash_color)
                             .when(hash.is_some() && monospace, |this| {
-                                this.font_family("Cascadia Mono")
+                                this.font_family(crate::theme::mono_font_family())
                             })
                             .whitespace_nowrap()
                             .child(hash_display),
@@ -3106,7 +3106,7 @@ impl MainView {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .font_family("Cascadia Mono")
+                                .font_family(crate::theme::mono_font_family())
                                 .text_size(crate::theme::caption())
                                 .text_color(palette.muted)
                                 .child(parent),
@@ -3399,7 +3399,7 @@ impl MainView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .font_family("Cascadia Mono")
+                    .font_family(crate::theme::mono_font_family())
                     .text_size(crate::theme::caption())
                     .text_color(palette.text)
                     .child(output_dir.display().to_string()),
