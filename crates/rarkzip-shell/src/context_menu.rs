@@ -16,7 +16,7 @@ mod imp {
 
     use rarkzip_engine::Settings;
     use windows::core::{implement, ComObject, Error, IUnknown, Interface, GUID, HSTRING, PCWSTR};
-    use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HINSTANCE, HMODULE};
+    use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HMODULE};
     use windows::Win32::Graphics::Gdi::{DeleteObject, HBITMAP, HGDIOBJ};
     use windows::Win32::System::Com::{
         IClassFactory, IClassFactory_Impl, IDataObject, DVASPECT_CONTENT, FORMATETC, STGMEDIUM,
@@ -34,8 +34,8 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetIconInfo, InsertMenuW,
-        LoadImageW, SetMenuItemInfoW, HICON, HMENU, ICONINFO, IMAGE_BITMAP, LR_DEFAULTCOLOR,
-        MENUITEMINFOW, MF_BYPOSITION, MF_POPUP, MF_STRING, MIIM_BITMAP,
+        SetMenuItemInfoW, HICON, HMENU, ICONINFO, MENUITEMINFOW, MF_BYPOSITION, MF_POPUP,
+        MF_STRING, MIIM_BITMAP,
     };
     use winreg::enums::{HKEY_CURRENT_USER, KEY_ALL_ACCESS};
     use winreg::RegKey;
@@ -112,25 +112,6 @@ mod imp {
         (!bitmap.is_invalid()).then_some(bitmap)
     }
 
-    /// Prefer the icon embedded in the shell DLL itself. This keeps the menu icon
-    /// available even if the executable is moved, renamed, or temporarily absent.
-    fn load_embedded_icon_bitmap() -> Option<HBITMAP> {
-        let module = module_handle()?;
-        let bitmap = unsafe {
-            LoadImageW(
-                Some(HINSTANCE(module.0)),
-                PCWSTR(std::ptr::without_provenance(101)),
-                IMAGE_BITMAP,
-                16,
-                16,
-                LR_DEFAULTCOLOR,
-            )
-        }
-        .ok()?;
-        let bitmap = HBITMAP(bitmap.0);
-        (!bitmap.is_invalid()).then_some(bitmap)
-    }
-
     fn load_exe_icon_bitmap() -> Option<HBITMAP> {
         let exe = exe_path()?;
         let wide: Vec<u16> = exe
@@ -155,7 +136,7 @@ mod imp {
     }
 
     fn load_icon_bitmap() -> Option<HBITMAP> {
-        load_embedded_icon_bitmap().or_else(load_exe_icon_bitmap)
+        load_exe_icon_bitmap()
     }
 
     pub(super) fn is_archive(path: &Path, settings: &Settings) -> bool {
