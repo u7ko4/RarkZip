@@ -34,7 +34,7 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetIconInfo, InsertMenuW,
-        LoadImageW, SetMenuItemInfoW, HICON, HMENU, ICONINFO, IMAGE_ICON, LR_DEFAULTCOLOR,
+        LoadImageW, SetMenuItemInfoW, HICON, HMENU, ICONINFO, IMAGE_BITMAP, LR_DEFAULTCOLOR,
         MENUITEMINFOW, MF_BYPOSITION, MF_POPUP, MF_STRING, MIIM_BITMAP,
     };
     use winreg::enums::{HKEY_CURRENT_USER, KEY_ALL_ACCESS};
@@ -116,18 +116,19 @@ mod imp {
     /// available even if the executable is moved, renamed, or temporarily absent.
     fn load_embedded_icon_bitmap() -> Option<HBITMAP> {
         let module = module_handle()?;
-        let icon = unsafe {
+        let bitmap = unsafe {
             LoadImageW(
                 Some(HINSTANCE(module.0)),
-                PCWSTR(std::ptr::without_provenance(1)),
-                IMAGE_ICON,
+                PCWSTR(std::ptr::without_provenance(101)),
+                IMAGE_BITMAP,
                 16,
                 16,
                 LR_DEFAULTCOLOR,
             )
         }
         .ok()?;
-        icon_to_bitmap(HICON(icon.0))
+        let bitmap = HBITMAP(bitmap.0);
+        (!bitmap.is_invalid()).then_some(bitmap)
     }
 
     fn load_exe_icon_bitmap() -> Option<HBITMAP> {
