@@ -2,9 +2,9 @@ name: Windows Build
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
+    tags:
+      - "v*"
+      - "[0-9]*"
   workflow_dispatch:
 
 permissions:
@@ -75,6 +75,11 @@ jobs:
           "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            git tag -l --format='%(contents)' $env:GITHUB_REF_NAME |
+              Set-Content -Path release-notes.md -Encoding utf8
+          }
+
           Get-ChildItem $stage | Select-Object Name, Length
 
       - name: Upload release artifact
@@ -85,8 +90,8 @@ jobs:
           if-no-files-found: error
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ZIP_NAME }}
-          generate_release_notes: true
+          body_path: release-notes.md
