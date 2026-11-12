@@ -15,7 +15,7 @@ mod task;
 mod theme;
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui_kit::*;
 use nimzip_engine::Settings;
@@ -78,6 +78,16 @@ fn main() -> std::process::ExitCode {
     if !new_sources.is_empty() || new_output.is_some() || !hash_sources.is_empty() {
         forced_gui = true;
     }
+    // 旧版/回退菜单可能为每个选中文件各启动一个进程。这里把同一批
+    // `--hash <file>` 启动聚合到一个进程，保证只打开一个哈希窗口。
+    let hash_sources = if hash_sources.is_empty() {
+        hash_sources
+    } else {
+        match aggregate_hash_launches(hash_sources) {
+            Some(paths) => paths,
+            None => return std::process::ExitCode::SUCCESS,
+        }
+    };
 
     // 快速解压 / 快速压缩弹出窗口入口。
     let quick_extract = take_flag_value(&mut args, "--quick-extract");
@@ -583,6 +593,125 @@ fn extract_preset_silently(
         ..Default::default()
     };
     nimzip_engine::extract_archive(archive, &options, &nimzip_engine::NoopSink).map(|_| ())
+}
+
+/// 聚合同一批 `--hash` 启动。
+///
+/// 多选菜单正常情况下由一个进程携带全部路径；旧式逐文件菜单会为每个文件
+/// 启动一个进程。首个进程充当 leader，短暂等待后读取所有请求并合并；
+/// 其余进程写入请求后直接退出。单个路径也会等待一个很短的批次窗口。
+fn aggregate_hash_launches(sources: Vec<PathBuf>) -> Option<Vec<PathBuf>> {
+    if sources.len() != 1 {
+        return Some(sources);
+    }
+
+    let dir = std::env::temp_dir().join("NimZip").join("hash-batch");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Some(sources);
+    }
+    let stamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let request = dir.join(format!("req-{stamp:020}-{}.json", std::process::id()));
+    let payload = serde_json::to_vec(&sources[0]).ok()?;
+    if std::fs::write(&request, payload).is_err() {
+        return Some(sources);
+    }
+
+    let lock = dir.join("leader.lock");
+    let mut leader = false;
+    for _ in 0..2 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
+            Ok(_) => {
+                leader = true;
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = std::fs::metadata(&lock)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age > Duration::from_secs(2));
+                if stale {
+                    let _ = std::fs::remove_file(&lock);
+                    continue;
+                }
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    if !leader {
+        return None;
+    }
+
+    let started = Instant::now();
+    let mut last_count = 0usize;
+    let mut last_change = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_millis(50));
+        let count = std::fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_name().to_string_lossy().starts_with("req-"))
+                    .count()
+            })
+            .unwrap_or(0);
+        if count != last_count {
+            last_count = count;
+            last_change = Instant::now();
+        }
+        if started.elapsed() >= Duration::from_millis(180)
+            && last_change.elapsed() >= Duration::from_millis(80)
+        {
+            break;
+        }
+        if started.elapsed() >= Duration::from_millis(600) {
+            break;
+        }
+    }
+
+    let mut requests: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("req-"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    requests.sort();
+    let mut merged = Vec::new();
+    for request in &requests {
+        let Ok(bytes) = std::fs::read(request) else {
+            continue;
+        };
+        let Ok(path) = serde_json::from_slice::<PathBuf>(&bytes) else {
+            continue;
+        };
+        if !merged.contains(&path) {
+            merged.push(path);
+        }
+    }
+    for path in requests {
+        let _ = std::fs::remove_file(path);
+    }
+    let _ = std::fs::remove_file(&lock);
+    let _ = std::fs::remove_dir(&dir);
+    if merged.is_empty() {
+        Some(sources)
+    } else {
+        Some(merged)
+    }
 }
 
 fn take_flag_value(args: &mut Vec<String>, flag: &str) -> Option<PathBuf> {
