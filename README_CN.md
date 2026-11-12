@@ -4,6 +4,8 @@
 
 RarkZip 提供归档浏览与编辑、智能解压、嵌套解压、密码管理、文件哈希和 Windows 资源管理器集成。
 
+[![Windows Build](https://github.com/u7ko4/RarkZip/actions/workflows/windows-build.yml/badge.svg)](https://github.com/u7ko4/RarkZip/actions/workflows/windows-build.yml)
+
 [English](README.md)
 
 ## 主要功能

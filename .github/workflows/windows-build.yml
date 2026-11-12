@@ -1,0 +1,89 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Build release
+        run: cargo build --release --workspace
+
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          $workspaceVersion = (
+            Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
+              Select-Object -First 1
+          ).Matches[0].Groups[1].Value
+
+          $refName = "${{ github.ref_name }}"
+          if ($refName -match '^v\d') {
+            $version = $refName.TrimStart('v')
+          } else {
+            $version = $workspaceVersion
+          }
+
+          $stage = "package/RarkZip"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/release/rarkzip.exe $stage
+          Copy-Item target/release/bx.exe $stage
+          Copy-Item target/release/rarkzip_shell.dll $stage
+          Copy-Item README.md, README_CN.md, LICENSE $stage
+
+          $zip = "RarkZip-$version-windows-x64.zip"
+          Compress-Archive -Path $stage -DestinationPath $zip -Force
+
+          "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          Get-ChildItem $stage | Select-Object Name, Length
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RarkZip-windows-x64
+          path: ${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+          generate_release_notes: true

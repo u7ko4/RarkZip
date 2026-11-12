@@ -4,6 +4,8 @@ A fast, modern archive manager for Windows, powered by a native Rust engine and 
 
 RarkZip combines everyday archive browsing and editing with smart extraction, nested archive handling, password management, hashing, and Windows Explorer integration.
 
+[![Windows Build](https://github.com/u7ko4/RarkZip/actions/workflows/windows-build.yml/badge.svg)](https://github.com/u7ko4/RarkZip/actions/workflows/windows-build.yml)
+
 [中文文档](README_CN.md)
 
 ## Features
