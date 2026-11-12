@@ -274,6 +274,8 @@ pub struct IntegrationSettings {
     pub double_click_folder: String,
     /// 文件右键菜单中启用的解压/打开动作 key。
     pub extract_verbs: Vec<String>,
+    /// 在任意文件类型（含无扩展名）上也显示解压菜单。
+    pub extract_any_file: bool,
     /// 在文件右键菜单中显示“计算文件哈希”，支持单文件和多文件选择。
     pub hash_menu: bool,
     /// 文件/文件夹右键菜单中启用的压缩动作 key。
@@ -320,6 +322,7 @@ impl Default for IntegrationSettings {
             .into_iter()
             .map(ToString::to_string)
             .collect(),
+            extract_any_file: false,
             hash_menu: true,
             compress_verbs: ["zip", "sevenz", "each_zip", "gui"]
                 .into_iter()

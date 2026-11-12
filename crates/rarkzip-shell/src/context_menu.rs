@@ -447,10 +447,12 @@ mod imp {
             return (labels, actions);
         }
         let all_archives = paths.iter().all(|path| is_archive(path, settings));
-        if all_archives {
+        let all_files = paths.iter().all(|path| path.is_file());
+        let show_extract = all_archives || (settings.integration.extract_any_file && all_files);
+        if show_extract {
             push_extract_actions(paths, settings, &mut labels, &mut actions);
-            // 多选压缩包时追加压缩动作；单选压缩包只显示解压动作。
-            if paths.len() > 1 {
+            // 多选或任意文件模式下，同时保留压缩动作。
+            if paths.len() > 1 || !all_archives {
                 push_compress_actions(paths, settings, &mut labels, &mut actions);
             }
         } else {
@@ -1006,6 +1008,26 @@ mod tests {
         let (multi, actions) = build_actions(&[a, b], &settings());
         assert_eq!(multi.last().unwrap(), "计算所选文件的哈希…");
         assert_eq!(actions.last().unwrap(), &MenuAction::Hash);
+    }
+
+    #[test]
+    fn extract_menu_can_target_any_file_type() {
+        let dir = temp_dir("extract-any");
+        let text = dir.join("document.txt");
+        let extensionless = dir.join("README");
+        let _ = std::fs::write(&text, b"text");
+        let _ = std::fs::write(&extensionless, b"readme");
+        let mut settings = settings();
+        settings.integration.extract_any_file = true;
+
+        for file in [&text, &extensionless] {
+            let (labels, _) = build_actions(std::slice::from_ref(file), &settings);
+            assert!(labels.iter().any(|label| label == "解压到此处(&E)"));
+            assert!(labels.iter().any(|label| label.contains("压缩为“")));
+        }
+
+        let (labels, _) = build_actions(std::slice::from_ref(&dir), &settings);
+        assert!(!labels.iter().any(|label| label.contains("解压到")));
     }
 
     #[test]

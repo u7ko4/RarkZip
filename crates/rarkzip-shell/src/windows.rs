@@ -66,30 +66,51 @@ fn install_in(classes: &RegKey, options: &ShellOptions, com_menu: bool) -> Resul
         let mut file_compress = enabled_compress_verbs(options);
         if options.hash_menu {
             extract.push(&VERB_HASH_ARCHIVE);
-            file_compress.push(&VERB_HASH);
+            if !options.extract_any_file {
+                file_compress.push(&VERB_HASH);
+            }
         }
         let directory_compress = enabled_compress_verbs(options);
-        install_verbs(
-            &file_shell,
-            &file_compress,
-            &options.exe,
-            icon.as_deref(),
-            options.cascade,
-            non_archive.as_deref(),
-            false,
-            "RarkZip.CompressMenu",
-        )?;
-        if archive.is_some() {
+        if options.extract_any_file {
+            // 单一菜单覆盖所有文件类型：解压动作在前，压缩动作在后。
+            let combined: Vec<&VerbSpec> = extract
+                .iter()
+                .copied()
+                .chain(file_compress.iter().copied())
+                .collect();
             install_verbs(
                 &file_shell,
-                &extract,
+                &combined,
                 &options.exe,
                 icon.as_deref(),
                 options.cascade,
-                archive.as_deref(),
+                None,
                 false,
-                "RarkZip.ArchiveMenu",
+                "RarkZip.Menu",
             )?;
+        } else {
+            install_verbs(
+                &file_shell,
+                &file_compress,
+                &options.exe,
+                icon.as_deref(),
+                options.cascade,
+                non_archive.as_deref(),
+                false,
+                "RarkZip.CompressMenu",
+            )?;
+            if archive.is_some() {
+                install_verbs(
+                    &file_shell,
+                    &extract,
+                    &options.exe,
+                    icon.as_deref(),
+                    options.cascade,
+                    archive.as_deref(),
+                    false,
+                    "RarkZip.ArchiveMenu",
+                )?;
+            }
         }
         install_verbs(
             &directory_shell,

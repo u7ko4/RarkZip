@@ -1175,6 +1175,7 @@ impl MainView {
             scope: rarkzip_shell::ShellScope::CurrentUser,
             archive_extensions: self.settings.integration.associations.clone(),
             extract_verbs: self.settings.integration.extract_verbs.clone(),
+            extract_any_file: self.settings.integration.extract_any_file,
             hash_menu: self.settings.integration.hash_menu,
             compress_verbs: self.settings.integration.compress_verbs.clone(),
             empty_verbs: self.settings.integration.empty_verbs.clone(),
@@ -1476,6 +1477,7 @@ impl MainView {
         let double_click = self.settings.integration.double_click.clone();
         let custom_folder = self.settings.integration.double_click_folder.clone();
         let extract_keys = self.settings.integration.extract_verbs.clone();
+        let extract_any_file = self.settings.integration.extract_any_file;
         let compress_keys = self.settings.integration.compress_verbs.clone();
         let empty_keys = self.settings.integration.empty_verbs.clone();
         let cascade = self.settings.integration.cascade;
@@ -1791,6 +1793,23 @@ impl MainView {
                 cx.notify();
             }),
         ));
+        let extract_scope_card = design::card(&palette).child(menu_grid(
+            &palette,
+            vec![menu_check_row(
+                &palette,
+                "cm-extract-any",
+                extract_any_file,
+                "在任意文件类型上显示（含无扩展名）",
+                cx.listener(|this, _, _, cx| {
+                    this.settings.integration.extract_any_file =
+                        !this.settings.integration.extract_any_file;
+                    this.save_settings();
+                    this.apply_shell_menu(cx);
+                    cx.notify();
+                }),
+            )],
+            1,
+        ));
         let extract_card = design::card(&palette).child(menu_grid(&palette, extract_rows, 2));
 
         let compress_all: Vec<String> = COMPRESS_MENU_OPTIONS
@@ -1973,6 +1992,7 @@ impl MainView {
             ))
             .child(double_card)
             .child(extract_head)
+            .child(extract_scope_card)
             .child(extract_card)
             .child(compress_head)
             .child(compress_card)
