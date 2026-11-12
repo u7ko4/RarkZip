@@ -1314,3 +1314,104 @@ fn creates_zipx_lzh_iso_zpaq_roundtrip() {
         );
     }
 }
+
+#[test]
+fn slow_nested_archive_reuses_parent_password() {
+    let temp = TempDir::new().unwrap();
+    let inner_source = temp.path().join("inner.txt");
+    write(&inner_source, b"inner slow shared");
+    let inner = temp.path().join("bundle/inner.7z");
+    let mut inner_options = options(ArchiveFormat::SevenZ);
+    inner_options.password = Some("shared-pass".to_string());
+    create_archive(
+        std::slice::from_ref(&inner_source),
+        &inner,
+        &inner_options,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let bundle = temp.path().join("bundle");
+    write(&bundle.join("readme.txt"), b"outer");
+    let outer = temp.path().join("outer.7z");
+    let mut outer_options = options(ArchiveFormat::SevenZ);
+    outer_options.password = Some("shared-pass".to_string());
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &outer_options,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("slow-reuse-out");
+    let extract_options = ExtractOptions {
+        mode: ExtractMode::Custom(out.clone()),
+        password: Some("shared-pass".to_string()),
+        nested_depth: 3,
+        ..Default::default()
+    };
+    let result = extract_archive(&outer, &extract_options, &NoopSink).unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(
+        fs::read(out.join("bundle/inner/inner.txt")).unwrap(),
+        b"inner slow shared"
+    );
+}
+
+#[test]
+fn parent_password_survives_unencrypted_intermediate_layer() {
+    let temp = TempDir::new().unwrap();
+    let inner_source = temp.path().join("inner.txt");
+    write(&inner_source, b"deep inner");
+    let inner = temp.path().join("inner.7z");
+    let mut inner_options = options(ArchiveFormat::SevenZ);
+    inner_options.password = Some("shared-pass".to_string());
+    create_archive(
+        std::slice::from_ref(&inner_source),
+        &inner,
+        &inner_options,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let middle_dir = temp.path().join("middle");
+    std::fs::create_dir_all(&middle_dir).unwrap();
+    std::fs::copy(&inner, middle_dir.join("inner.7z")).unwrap();
+    let middle = temp.path().join("middle.zip");
+    create_archive(
+        std::slice::from_ref(&middle_dir),
+        &middle,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+
+    let outer_dir = temp.path().join("outer");
+    std::fs::create_dir_all(&outer_dir).unwrap();
+    std::fs::copy(&middle, outer_dir.join("middle.zip")).unwrap();
+    let outer = temp.path().join("outer.7z");
+    let mut outer_options = options(ArchiveFormat::SevenZ);
+    outer_options.password = Some("shared-pass".to_string());
+    create_archive(
+        std::slice::from_ref(&outer_dir),
+        &outer,
+        &outer_options,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("deep-out");
+    let extract_options = ExtractOptions {
+        mode: ExtractMode::Custom(out.clone()),
+        password: Some("shared-pass".to_string()),
+        nested_depth: 4,
+        ..Default::default()
+    };
+    let result = extract_archive(&outer, &extract_options, &NoopSink).unwrap();
+    assert_eq!(result.nested_archives, 2);
+    assert_eq!(
+        fs::read(out.join("outer/middle/middle/inner/inner.txt")).unwrap(),
+        b"deep inner"
+    );
+}

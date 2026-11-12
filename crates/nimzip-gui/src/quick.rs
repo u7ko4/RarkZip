@@ -127,11 +127,13 @@ enum QuickEvent {
         conflicts: usize,
         first: Option<ConflictInfo>,
         selected: Option<Vec<usize>>,
+        password: Option<String>,
     },
     SmartPrepared {
         dest: PathBuf,
         conflicts: Vec<SmartConflictInfo>,
         all_indices: Vec<usize>,
+        password: Option<String>,
     },
     Progress {
         percent: f32,
@@ -401,8 +403,12 @@ impl QuickView {
                 conflicts,
                 first,
                 selected,
+                password,
             } => {
                 self.running = false;
+                if password.is_some() {
+                    self.password = password;
+                }
                 self.total_entries = total_entries;
                 self.prepared_selected = selected;
                 if conflicts > 0 {
@@ -417,8 +423,12 @@ impl QuickView {
                 dest,
                 conflicts,
                 all_indices,
+                password,
             } => {
                 self.running = false;
+                if password.is_some() {
+                    self.password = password;
+                }
                 self.smart_dest = Some(dest.clone());
                 self.active_dest = Some(dest);
                 self.smart_conflicts = conflicts;
@@ -567,6 +577,7 @@ impl QuickView {
         let password = self.password.clone();
         let control = self.control.clone();
         std::thread::spawn(move || {
+            let mut resolved_password = password.clone();
             let mut result = open_archive(
                 &archive,
                 &OpenOptions {
@@ -580,6 +591,7 @@ impl QuickView {
             {
                 let book = PasswordBook::load_default();
                 if let Ok(Some(found)) = book.try_all(&archive) {
+                    resolved_password = Some(found.clone());
                     result = open_archive(
                         &archive,
                         &OpenOptions {
@@ -600,8 +612,18 @@ impl QuickView {
                     return;
                 }
             };
-            // ZIP 的中央目录可以直接读取，密码只在解压内容时校验。
-            if info.encrypted && password.is_none() {
+            // ZIP 的中央目录可以直接读取，密码只在解压内容时校验；
+            // 能快速试密的格式先按密码本尝试，命中后把密码传给后续嵌套层。
+            if info.encrypted
+                && resolved_password.is_none()
+                && nimzip_engine::supports_quick_password_test(&archive)
+            {
+                let book = PasswordBook::load_default();
+                if let Ok(Some(found)) = book.try_all(&archive) {
+                    resolved_password = Some(found);
+                }
+            }
+            if info.encrypted && resolved_password.is_none() {
                 let _ = sender.send(QuickEvent::NeedPassword);
                 return;
             }
@@ -638,6 +660,7 @@ impl QuickView {
                 conflicts,
                 first,
                 selected: (conflicts > 0).then_some(selected),
+                password: resolved_password,
             });
         });
         cx.notify();
@@ -658,6 +681,7 @@ impl QuickView {
         let control = self.control.clone();
 
         std::thread::spawn(move || {
+            let mut resolved_password = password.clone();
             let mut result = open_archive(
                 &archive,
                 &OpenOptions {
@@ -671,6 +695,7 @@ impl QuickView {
             {
                 let book = PasswordBook::load_default();
                 if let Ok(Some(found)) = book.try_all(&archive) {
+                    resolved_password = Some(found.clone());
                     result = open_archive(
                         &archive,
                         &OpenOptions {
@@ -691,7 +716,18 @@ impl QuickView {
                     return;
                 }
             };
-            if info.encrypted && password.is_none() {
+            // ZIP 的中央目录可以直接读取，密码只在解压内容时校验；
+            // 能快速试密的格式先按密码本尝试，命中后把密码传给后续嵌套层。
+            if info.encrypted
+                && resolved_password.is_none()
+                && nimzip_engine::supports_quick_password_test(&archive)
+            {
+                let book = PasswordBook::load_default();
+                if let Ok(Some(found)) = book.try_all(&archive) {
+                    resolved_password = Some(found);
+                }
+            }
+            if info.encrypted && resolved_password.is_none() {
                 let _ = sender.send(QuickEvent::NeedPassword);
                 return;
             }
@@ -736,6 +772,7 @@ impl QuickView {
                 dest: target.dest,
                 conflicts,
                 all_indices,
+                password: resolved_password,
             });
         });
         cx.notify();

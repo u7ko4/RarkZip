@@ -190,7 +190,16 @@ fn open_with_password_resolution(
     }
 
     match open(options.password.clone()) {
-        Ok(info) if !info.encrypted => return Ok((info, None)),
+        // 未加密的中间层不应丢弃父层已确认的密码，否则更深层的嵌套包会失去继承。
+        Ok(info) if !info.encrypted => {
+            return Ok((
+                info,
+                options
+                    .password
+                    .clone()
+                    .filter(|password| !password.is_empty()),
+            ));
+        }
         Ok(info) => {
             if let Some(password) = &options.password {
                 match test_password(path, password) {
