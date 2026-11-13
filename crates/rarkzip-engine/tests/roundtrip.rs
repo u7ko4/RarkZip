@@ -1,12 +1,13 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rarkzip_engine::{
     create_archive, extract_archive, hash_bytes, hash_file_many, open_archive, smart_target,
     test_password, verify_archive, ArchiveFormat, CreateOptions, ExtractMode, ExtractOptions,
-    HashAlgorithm, NoopSink, OpenOptions, PasswordBook, RecoveryControl, RecoveryMode,
-    RecoveryOptions, ZipAlgorithm,
+    HashAlgorithm, NoopSink, OpenOptions, PasswordBook, PasswordPrompt, Progress, ProgressSink,
+    RecoveryControl, RecoveryMode, RecoveryOptions, ZipAlgorithm,
 };
 use tempfile::TempDir;
 
@@ -158,6 +159,49 @@ fn zip_with_prefixed_payload_is_detected() {
     };
     extract_archive(&prefixed, &extract_opts, &NoopSink).unwrap();
     assert_eq!(fs::read(out.join("notes.txt")).unwrap(), b"hello prefix");
+}
+
+#[test]
+fn zip_with_prefix_and_trailing_video_data_is_detected() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("sam.txt");
+    write(&source, b"embedded zip payload");
+    let plain = temp.path().join("plain.zip");
+    create_archive(
+        std::slice::from_ref(&source),
+        &plain,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+
+    // 真实样本：视频头 + ZIP + ZIP 结束记录之后的视频尾数据。
+    let mut disguised = vec![0x41u8; 64 * 1024];
+    disguised.extend_from_slice(&fs::read(&plain).unwrap());
+    disguised.extend_from_slice(&[0x42u8; 12_307]);
+    let embedded = temp.path().join("MiokPawN35M91ODb_1.mp4");
+    fs::write(&embedded, disguised).unwrap();
+
+    let info = open_archive(&embedded, &OpenOptions::default()).unwrap();
+    assert_eq!(info.format, ArchiveFormat::Zip);
+    assert_eq!(info.file_count(), 1);
+    assert!(info.entries.iter().any(|entry| entry.path == "sam.txt"));
+
+    let out = temp.path().join("embedded-out");
+    extract_archive(
+        &embedded,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(out.join("sam.txt")).unwrap(),
+        b"embedded zip payload"
+    );
 }
 
 #[test]
@@ -1416,4 +1460,304 @@ fn parent_password_survives_unencrypted_intermediate_layer() {
         fs::read(out.join("outer/middle/middle/inner/inner.txt")).unwrap(),
         b"deep inner"
     );
+}
+
+struct PasswordSink {
+    password: String,
+    requests: AtomicUsize,
+}
+
+impl PasswordSink {
+    fn new(password: &str) -> Self {
+        Self {
+            password: password.to_string(),
+            requests: AtomicUsize::new(0),
+        }
+    }
+
+    fn requests(&self) -> usize {
+        self.requests.load(Ordering::Relaxed)
+    }
+}
+
+impl ProgressSink for PasswordSink {
+    fn update(&self, _progress: &Progress) {}
+
+    fn request_password(&self, prompt: &PasswordPrompt) -> Option<String> {
+        assert!(prompt.attempt >= 1);
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        Some(self.password.clone())
+    }
+}
+
+fn write_apate_volumes(
+    directory: &Path,
+    stem: &str,
+    bytes: &[u8],
+    parts: usize,
+    masks: &[usize],
+) -> Vec<PathBuf> {
+    assert!(parts >= 2);
+    assert_eq!(masks.len(), parts);
+    let chunk = bytes.len().div_ceil(parts);
+    let mut paths = Vec::new();
+    for (index, mask) in masks.iter().enumerate().take(parts) {
+        let start = index * chunk;
+        let end = ((index + 1) * chunk).min(bytes.len());
+        let part = &bytes[start..end];
+        assert!(part.len() > *mask + 16);
+        let disguised = make_apate(part, *mask);
+        let path = directory.join(format!("{stem}.{:03}.mp4", index + 1));
+        write(&path, &disguised);
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn apate_disguised_split_volumes_are_revealed_and_extracted() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("secret.txt");
+    let mut state = 0x1234_5678u32;
+    let content: Vec<u8> = (0..20_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state & 0xff) as u8
+        })
+        .collect();
+    write(&source, &content);
+    let plain = temp.path().join("plain.zip");
+    let mut create = options(ArchiveFormat::Zip);
+    create.password = Some("vol-pass".to_string());
+    create_archive(std::slice::from_ref(&source), &plain, &create, &NoopSink).unwrap();
+
+    let bytes = fs::read(&plain).unwrap();
+    fs::remove_file(&plain).unwrap();
+    let volumes = write_apate_volumes(temp.path(), "CH34.zip", &bytes, 3, &[64, 80, 48]);
+    let sizes: Vec<u64> = volumes
+        .iter()
+        .map(|path| fs::metadata(path).unwrap().len())
+        .collect();
+
+    // 从任意一卷打开都能找回整套分卷并还原 apate 伪装。
+    let info = open_archive(&volumes[1], &OpenOptions::default()).unwrap();
+    assert_eq!(info.format, ArchiveFormat::Zip);
+    assert!(info.disguised);
+    assert!(info
+        .entries
+        .iter()
+        .any(|entry| entry.path.ends_with("secret.txt")));
+    assert!(rarkzip_engine::supports_quick_password_test(&volumes[1]));
+    assert!(test_password(&volumes[0], "vol-pass").unwrap());
+    assert!(!test_password(&volumes[0], "wrong-pass").unwrap());
+
+    let out = temp.path().join("apate-volumes-out");
+    extract_archive(
+        &volumes[0],
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("vol-pass".to_string()),
+            propagate_motw: false,
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(fs::read(out.join("secret.txt")).unwrap(), content);
+
+    // 原始伪装分卷只读。
+    for (volume, expected) in volumes.iter().zip(sizes) {
+        assert_eq!(fs::metadata(volume).unwrap().len(), expected);
+    }
+}
+
+#[test]
+fn nested_apate_volumes_reuse_parent_password() {
+    let temp = TempDir::new().unwrap();
+    let inner_source = temp.path().join("inner.txt");
+    write(&inner_source, b"inner apate volume");
+    let inner = temp.path().join("inner.zip");
+    let mut inner_create = options(ArchiveFormat::Zip);
+    inner_create.password = Some("shared-pass".to_string());
+    inner_create.include_root = false;
+    create_archive(
+        std::slice::from_ref(&inner_source),
+        &inner,
+        &inner_create,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let bundle = temp.path().join("bundle");
+    write(&bundle.join("readme.txt"), b"outer");
+    let inner_bytes = fs::read(&inner).unwrap();
+    fs::remove_file(&inner).unwrap();
+    write_apate_volumes(&bundle, "inner.zip", &inner_bytes, 2, &[24, 40]);
+
+    let outer = temp.path().join("outer.zip");
+    let mut outer_create = options(ArchiveFormat::Zip);
+    outer_create.password = Some("shared-pass".to_string());
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &outer_create,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("nested-apate-out");
+    let sink = PasswordSink::new("unused");
+    let result = extract_archive(
+        &outer,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("shared-pass".to_string()),
+            passwords: Vec::new(),
+            propagate_motw: false,
+            nested_depth: 3,
+            ..Default::default()
+        },
+        &sink,
+    )
+    .unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(sink.requests(), 0);
+    assert_eq!(
+        fs::read(out.join("bundle/inner.zip.001/inner.txt")).unwrap(),
+        b"inner apate volume"
+    );
+}
+
+#[test]
+fn nested_password_prompt_is_used_when_parent_password_is_missing() {
+    let temp = TempDir::new().unwrap();
+    let inner_source = temp.path().join("inner.txt");
+    write(&inner_source, b"prompt inner");
+    let inner = temp.path().join("inner.zip");
+    let mut inner_create = options(ArchiveFormat::Zip);
+    inner_create.password = Some("inner-pass".to_string());
+    inner_create.include_root = false;
+    create_archive(
+        std::slice::from_ref(&inner_source),
+        &inner,
+        &inner_create,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let bundle = temp.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    fs::copy(&inner, bundle.join("inner.zip")).unwrap();
+    write(&bundle.join("readme.txt"), b"outer");
+    let outer = temp.path().join("outer.zip");
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("prompt-nested-out");
+    let sink = PasswordSink::new("inner-pass");
+    let result = extract_archive(
+        &outer,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: None,
+            passwords: Vec::new(),
+            propagate_motw: false,
+            nested_depth: 3,
+            ..Default::default()
+        },
+        &sink,
+    )
+    .unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(sink.requests(), 1);
+    assert_eq!(
+        fs::read(out.join("bundle/inner/inner.txt")).unwrap(),
+        b"prompt inner"
+    );
+}
+
+#[test]
+fn nested_rar_reuses_parent_password_without_prompt() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/crypted.rar");
+    let temp = TempDir::new().unwrap();
+    let bundle = temp.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    fs::copy(&fixture, bundle.join("crypted.rar")).unwrap();
+    write(&bundle.join("readme.txt"), b"outer");
+    let outer = temp.path().join("outer.zip");
+    let mut outer_create = options(ArchiveFormat::Zip);
+    outer_create.password = Some("unrar".to_string());
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &outer_create,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("nested-rar-out");
+    let sink = PasswordSink::new("unused");
+    let result = extract_archive(
+        &outer,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("unrar".to_string()),
+            passwords: Vec::new(),
+            propagate_motw: false,
+            nested_depth: 3,
+            ..Default::default()
+        },
+        &sink,
+    )
+    .unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(sink.requests(), 0);
+    assert!(out.join("bundle/crypted/.gitignore").exists());
+}
+
+#[test]
+fn nested_rar_wrong_parent_password_prompts() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/crypted.rar");
+    let temp = TempDir::new().unwrap();
+    let bundle = temp.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    fs::copy(&fixture, bundle.join("crypted.rar")).unwrap();
+    write(&bundle.join("readme.txt"), b"outer");
+    let outer = temp.path().join("outer.zip");
+    let mut outer_create = options(ArchiveFormat::Zip);
+    outer_create.password = Some("outer-pass".to_string());
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &outer_create,
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("nested-rar-prompt-out");
+    let sink = PasswordSink::new("unrar");
+    let result = extract_archive(
+        &outer,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("outer-pass".to_string()),
+            passwords: Vec::new(),
+            propagate_motw: false,
+            nested_depth: 3,
+            ..Default::default()
+        },
+        &sink,
+    )
+    .unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(sink.requests(), 1);
+    assert!(out.join("bundle/crypted/.gitignore").exists());
 }

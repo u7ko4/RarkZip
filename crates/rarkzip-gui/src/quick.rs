@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::Icon;
+use gpui_kit::component::{Disableable, Icon};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -19,7 +19,7 @@ use gpui_kit::*;
 use rarkzip_engine::{
     create_archive, extract_archive, format_size, open_archive, ArchiveFormat, Codepage,
     CreateOptions, EngineError, ExtractMode, ExtractOptions, OpenOptions, PasswordBook,
-    ProgressSink, Settings, ZipAlgorithm,
+    PasswordPrompt, ProgressSink, Settings, ZipAlgorithm,
 };
 
 use crate::components::*;
@@ -122,6 +122,10 @@ struct SmartConflictInfo {
 #[derive(Debug)]
 enum QuickEvent {
     NeedPassword,
+    PasswordPrompt {
+        prompt: PasswordPrompt,
+        responder: Sender<Option<String>>,
+    },
     Prepared {
         total_entries: usize,
         conflicts: usize,
@@ -194,6 +198,35 @@ impl ProgressSink for QuickSink {
     fn is_cancelled(&self) -> bool {
         self.control.cancelled.load(Ordering::Relaxed)
     }
+
+    /// 嵌套层密码错误或首层需要密码时，阻塞工作线程等待窗口输入。
+    fn request_password(&self, prompt: &PasswordPrompt) -> Option<String> {
+        if self.control.cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        let (responder, receiver) = unbounded();
+        if self
+            .sender
+            .send(QuickEvent::PasswordPrompt {
+                prompt: prompt.clone(),
+                responder,
+            })
+            .is_err()
+        {
+            return None;
+        }
+        loop {
+            match receiver.recv_timeout(Duration::from_millis(120)) {
+                Ok(value) => return value,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if self.control.cancelled.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return None,
+            }
+        }
+    }
 }
 
 pub struct QuickView {
@@ -211,6 +244,12 @@ pub struct QuickView {
     remember: bool,
     password_error: Option<String>,
     password_attempted: bool,
+    /// 当前窗口创建时加载的密码本，用于密码弹窗中的快速选择。
+    password_book: PasswordBook,
+    password_picker_open: bool,
+    password_reveal: bool,
+    /// 引擎阻塞等待中的密码请求；提交后通过它唤醒工作线程。
+    pending_password_prompt: Option<(Sender<Option<String>>, PasswordPrompt)>,
     conflict: Option<ConflictInfo>,
     conflict_choice: ConflictChoice,
     smart_dest: Option<PathBuf>,
@@ -241,6 +280,25 @@ pub struct QuickView {
 
 impl QuickView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, action: QuickAction) -> Self {
+        Self::build(window, cx, action, PasswordBook::load_default())
+    }
+
+    #[cfg(test)]
+    fn new_with_book(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: QuickAction,
+        password_book: PasswordBook,
+    ) -> Self {
+        Self::build(window, cx, action, password_book)
+    }
+
+    fn build(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: QuickAction,
+        password_book: PasswordBook,
+    ) -> Self {
         let settings = Settings::load();
         let theme_mode = ThemeMode::from_setting(&settings.view.theme);
         let skin = Skin::from_setting(&settings.view.theme_skin);
@@ -305,6 +363,10 @@ impl QuickView {
             remember: false,
             password_error: None,
             password_attempted: false,
+            password_book,
+            password_picker_open: false,
+            password_reveal: true,
+            pending_password_prompt: None,
             conflict: None,
             conflict_choice: ConflictChoice::Overwrite,
             smart_dest: None,
@@ -345,6 +407,7 @@ impl QuickView {
         window.on_window_should_close(&*cx, move |window, cx| {
             let _ = weak.update(cx, |view, _| {
                 view.control.cancelled.store(true, Ordering::Relaxed);
+                view.cancel_pending_prompt();
                 view.persist_window_size(window);
             });
             true
@@ -393,9 +456,24 @@ impl QuickView {
             QuickEvent::NeedPassword => {
                 self.running = false;
                 self.step = Step::Password;
+                self.password_picker_open = false;
+                self.password_reveal = true;
                 self.password_error = self
                     .password_attempted
                     .then(|| "密码错误，请重试。".to_string());
+                self.resize_for_step(cx);
+            }
+            QuickEvent::PasswordPrompt { prompt, responder } => {
+                // 工作线程已在等待回复：此时不能重启解压，提交后直接把
+                // 密码送回引擎，让嵌套/首层流程原地继续。
+                self.running = false;
+                self.password_attempted = prompt.attempt > 1;
+                self.password_error =
+                    (prompt.attempt > 1).then(|| "密码错误，请重试。".to_string());
+                self.password_picker_open = false;
+                self.password_reveal = true;
+                self.pending_password_prompt = Some((responder, prompt));
+                self.step = Step::Password;
                 self.resize_for_step(cx);
             }
             QuickEvent::Prepared {
@@ -452,6 +530,7 @@ impl QuickView {
                 }
             }
             QuickEvent::Extracted { dest, files, bytes } => {
+                self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Done;
                 self.percent = 100.0;
@@ -493,12 +572,14 @@ impl QuickView {
                 return;
             }
             QuickEvent::Failed(error) => {
+                self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Failed;
                 self.error = Some(error);
                 self.resize_for_step(cx);
             }
             QuickEvent::Cancelled => {
+                self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Failed;
                 self.error = Some("任务已取消。".to_string());
@@ -555,6 +636,19 @@ impl QuickView {
             cx.notify();
             return;
         }
+        self.password_picker_open = false;
+        // 嵌套层/首层的密码请求：工作线程正阻塞等待，直接回复它。
+        if let Some((responder, _)) = self.pending_password_prompt.take() {
+            self.password = Some(value.clone());
+            self.password_error = None;
+            self.password_attempted = true;
+            let _ = responder.send(Some(value));
+            self.running = true;
+            self.step = Step::Progress;
+            self.resize_for_step(cx);
+            cx.notify();
+            return;
+        }
         self.password = Some(value);
         self.password_error = None;
         self.password_attempted = true;
@@ -565,6 +659,26 @@ impl QuickView {
             }
             QuickAction::ExtractPreset { .. } => self.start_preset_extract(cx),
             QuickAction::Compress { .. } => {}
+        }
+    }
+
+    /// 密码弹窗：选择密码本条目后填入并立即尝试。
+    fn select_book_password(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.password_book.entries().get(index).cloned() else {
+            return;
+        };
+        self.password_input.update(cx, |state, cx| {
+            state.set_value(entry.password.clone(), window, cx);
+        });
+        self.password = Some(entry.password);
+        self.password_picker_open = false;
+        self.submit_password(cx);
+    }
+
+    /// 取消仍阻塞在密码请求上的工作线程。
+    fn cancel_pending_prompt(&mut self) {
+        if let Some((responder, _)) = self.pending_password_prompt.take() {
+            let _ = responder.send(None);
         }
     }
 
@@ -782,7 +896,14 @@ impl QuickView {
         // 内容区随界面字号缩放；去掉“内容/最近处理”后，进度与结果页按实际内容收紧高度。
         let font_delta = (crate::theme::ui_font_size() - 13.0) * 18.0;
         let (width, height) = match self.step {
-            Step::Password => (self.base_size.0.clamp(500.0, 640.0), 440.0),
+            Step::Password => (
+                self.base_size.0.clamp(500.0, 640.0),
+                if self.password_picker_open {
+                    660.0
+                } else {
+                    440.0
+                },
+            ),
             Step::Conflict => (self.base_size.0.max(600.0), 480.0),
             Step::Progress => (self.base_size.0, (405.0 + font_delta).clamp(390.0, 510.0)),
             Step::Done | Step::Failed => {
@@ -1170,6 +1291,8 @@ impl QuickView {
 
     /// 应用内关闭按钮不会触发 on_window_should_close，关闭前显式保存尺寸。
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.control.cancelled.store(true, Ordering::Relaxed);
+        self.cancel_pending_prompt();
         self.persist_window_size(window);
         window.remove_window();
         cx.notify();
@@ -1184,6 +1307,7 @@ impl QuickView {
 
     fn stop(&mut self, cx: &mut Context<Self>) {
         self.control.cancelled.store(true, Ordering::Relaxed);
+        self.cancel_pending_prompt();
         cx.notify();
     }
 
@@ -1629,6 +1753,150 @@ impl QuickView {
     fn render_password_step(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
         let error = self.password_error.clone();
+        let prompt = self
+            .pending_password_prompt
+            .as_ref()
+            .map(|(_, prompt)| prompt.clone());
+        let description = prompt
+            .as_ref()
+            .filter(|prompt| prompt.attempt <= 1)
+            .map(|prompt| prompt.message.clone())
+            .unwrap_or_else(|| "输入加密文件的密码。".to_string());
+        let archive_name = prompt
+            .as_ref()
+            .and_then(|prompt| prompt.archive.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.subtitle());
+
+        let book: Vec<(String, String)> = self
+            .password_book
+            .entries()
+            .iter()
+            .map(|entry| (entry.note.clone(), entry.password.clone()))
+            .collect();
+        let book_count = book.len();
+        let reveal = self.password_reveal;
+        let picker_open = self.password_picker_open;
+        let mut picker = div().flex().flex_col().gap(px(7.0)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .debug_selector(|| "quick-pwd-book-toggle".to_string())
+                        .child(
+                            Button::new("quick-pwd-book")
+                                .label(format!("从密码本选择（{book_count}）"))
+                                .icon(icon(IconName::BookOpen, palette.accent, 15.0))
+                                .outline()
+                                .h(px(30.0))
+                                .px(px(12.0))
+                                .text_size(crate::theme::caption())
+                                .disabled(book_count == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.password_picker_open = !this.password_picker_open;
+                                    this.resize_for_step(cx);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(crate::design::icon_action(
+                    &palette,
+                    "quick-pwd-reveal",
+                    if reveal {
+                        IconName::EyeOff
+                    } else {
+                        IconName::Eye
+                    },
+                    palette.sub,
+                    book_count == 0,
+                    if reveal {
+                        "隐藏密码"
+                    } else {
+                        "显示密码"
+                    },
+                    cx.listener(|this, _, _, cx| {
+                        this.password_reveal = !this.password_reveal;
+                        cx.notify();
+                    }),
+                )),
+        );
+        if book_count == 0 {
+            picker = picker.child(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child("密码本为空，可先在主窗口的密码本页面添加常用密码。"),
+            );
+        } else if picker_open {
+            let mut list = div()
+                .id("quick-password-book-list")
+                .flex()
+                .flex_col()
+                .max_h(px(150.0))
+                .overflow_y_scroll()
+                .rounded(px(crate::theme::RADIUS_CONTROL))
+                .border_1()
+                .border_color(palette.line)
+                .bg(palette.panel);
+            for (index, (note, password)) in book.iter().enumerate() {
+                let label = if note.is_empty() {
+                    format!("密码 {}", index + 1)
+                } else {
+                    note.clone()
+                };
+                let shown = if reveal {
+                    password.clone()
+                } else {
+                    "••••••••".to_string()
+                };
+                list = list.child(
+                    div()
+                        .id(format!("quick-password-book-{index}"))
+                        .debug_selector(|| format!("quick-password-book-{index}"))
+                        .role(Role::Button)
+                        .aria_label(label.clone())
+                        .cursor_pointer()
+                        .h(px(32.0))
+                        .px(px(10.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .when(index + 1 < book_count, |this| {
+                            this.border_b_1().border_color(palette.line)
+                        })
+                        .hover(|style| style.bg(palette.hover))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_book_password(index, window, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.text)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .font_family("Cascadia Mono")
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.muted)
+                                .child(shown),
+                        ),
+                );
+            }
+            picker = picker.child(list).child(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child("点击密码即可直接尝试。"),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
@@ -1640,7 +1908,7 @@ impl QuickView {
                 div()
                     .text_size(crate::theme::body())
                     .text_color(palette.text)
-                    .child("输入加密文件的密码。"),
+                    .child(description),
             )
             .when_some(error, |this, error| {
                 this.child(
@@ -1650,37 +1918,39 @@ impl QuickView {
                         .child(error),
                 )
             })
-            .child(
-                div()
-                    .rounded(px(crate::theme::RADIUS_OVERLAY))
-                    .border_1()
-                    .border_color(palette.line)
-                    .bg(palette.panel)
-                    .p(px(12.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(icon(IconName::Lock, palette.accent, 18.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.0))
-                            .child(
-                                div()
-                                    .text_size(crate::theme::caption())
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(palette.text)
-                                    .child("该压缩包已加密"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(crate::theme::caption())
-                                    .text_color(palette.muted)
-                                    .child("输入密码后才能继续解压，密码只用于本次操作。"),
-                            ),
-                    ),
-            )
+            .when(!picker_open, |this| {
+                this.child(
+                    div()
+                        .rounded(px(crate::theme::RADIUS_OVERLAY))
+                        .border_1()
+                        .border_color(palette.line)
+                        .bg(palette.panel)
+                        .p(px(12.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .child(icon(IconName::Lock, palette.accent, 18.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .child(
+                                    div()
+                                        .text_size(crate::theme::caption())
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(palette.text)
+                                        .child("该压缩包已加密"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(crate::theme::caption())
+                                        .text_color(palette.muted)
+                                        .child("输入密码后才能继续解压，密码只用于本次操作。"),
+                                ),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -1701,7 +1971,7 @@ impl QuickView {
                             .font_family("Cascadia Mono")
                             .text_size(crate::theme::caption())
                             .text_color(palette.text)
-                            .child(self.subtitle()),
+                            .child(archive_name),
                     ),
             )
             .child(
@@ -1717,6 +1987,7 @@ impl QuickView {
                     )
                     .child(control_height(Input::new(&self.password_input))),
             )
+            .child(picker)
             .child(
                 div()
                     .text_size(crate::theme::caption())
@@ -2726,5 +2997,132 @@ fn unique_dir(dir: &Path) -> PathBuf {
             return candidate;
         }
         index += 1;
+    }
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    use gpui_kit::{point, AppContext, Modifiers, TestAppContext, VisualTestContext};
+    use rarkzip_engine::PasswordBook;
+
+    use super::{ExtractPreset, QuickAction, QuickView, Step};
+
+    struct LocalAppDataGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl LocalAppDataGuard {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for LocalAppDataGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+        }
+    }
+
+    fn pump(visual: &mut VisualTestContext) {
+        visual.executor().advance_clock(Duration::from_millis(100));
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    /// 真实密码弹窗 UI：展开密码本列表，点击条目后自动提交并完成解压。
+    #[cfg(debug_assertions)]
+    #[gpui_kit::test]
+    fn password_prompt_book_picker_selects_entry(cx: &mut TestAppContext) {
+        let _serial = crate::UI_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let _env = LocalAppDataGuard::set(temp.path());
+        cx.update(gpui_kit::init);
+
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../rarkzip-engine/tests/fixtures/crypted.rar");
+        let archive = temp.path().join("crypted.rar");
+        std::fs::copy(&fixture, &archive).unwrap();
+
+        let mut book = PasswordBook::load(temp.path().join("passwords.json"));
+        book.add("unrar", "测试密码");
+        book.add("wrong-pass", "备用密码");
+
+        let action = QuickAction::ExtractPreset {
+            archive: archive.clone(),
+            preset: ExtractPreset::Here,
+            delete: false,
+        };
+        let (view, visual) = cx
+            .add_window_view(move |window, cx| QuickView::new_with_book(window, cx, action, book));
+
+        // 等后台解压线程发现 RAR 需要密码并切到密码步骤。
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            pump(visual);
+            if visual.read_entity(&view, |view, _| view.step) == Step::Password {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "等待密码弹窗超时，当前步骤：{:?}",
+                visual.read_entity(&view, |view, _| view.step)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            visual.read_entity(&view, |view, _| view.password_reveal),
+            "密码本列表应默认显示明文"
+        );
+
+        // 展开“从密码本选择”。
+        let toggle = visual
+            .debug_bounds("quick-pwd-book-toggle")
+            .expect("密码本选择按钮未渲染");
+        visual.simulate_click(
+            point(toggle.center().x, toggle.center().y),
+            Modifiers::default(),
+        );
+        pump(visual);
+        assert!(
+            visual.read_entity(&view, |view, _| view.password_picker_open),
+            "密码本列表未展开"
+        );
+
+        // 点击第一条密码（测试密码本中为 unrar），应自动填入并提交。
+        let row = visual
+            .debug_bounds("quick-password-book-0")
+            .expect("密码本条目未渲染");
+        visual.simulate_click(point(row.center().x, row.center().y), Modifiers::default());
+        pump(visual);
+        assert_eq!(
+            visual.read_entity(&view, |view, _| view.password.clone()),
+            Some("unrar".to_string()),
+            "选择密码后未填入并提交密码"
+        );
+
+        // 密码被引擎接受后，crypted.rar 中的 .gitignore 应解压到临时目录。
+        let output = temp.path().join(".gitignore");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !output.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "选择密码后解压超时，skipped：{:?}",
+                visual.read_entity(&view, |view, _| view.error.clone())
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(output.is_file());
     }
 }

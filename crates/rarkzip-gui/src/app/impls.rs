@@ -1783,6 +1783,9 @@ impl MainView {
             } => {
                 self.spawn_open_entry(archive, index, entry, password, cx);
             }
+            PendingAction::Prompt { responder, .. } => {
+                let _ = responder.send(password);
+            }
         }
     }
 
@@ -1801,6 +1804,15 @@ impl MainView {
             cx.notify();
             return;
         }
+        // 无法快速校验的格式（如部分 RAR）在 UI 线程验证密码会长时间无响应；
+        // 交给后台任务在解压时验证，错误时引擎会再次请求密码。
+        let quick_test = rarkzip_engine::supports_quick_password_test(&archive);
+        if !quick_test || matches!(pending, PendingAction::Prompt { .. }) {
+            self.modal = None;
+            self.password_picker_open = false;
+            self.execute_pending(pending, Some(password), cx);
+            return;
+        }
         match rarkzip_engine::test_password(&archive, &password) {
             Ok(true) => {
                 let mut book = PasswordBook::load_default();
@@ -1813,6 +1825,7 @@ impl MainView {
                 }
                 self.set_archive_password(&archive, &password);
                 self.modal = None;
+                self.password_picker_open = false;
                 self.execute_pending(pending, Some(password), cx);
             }
             Ok(false) => {
@@ -1828,6 +1841,23 @@ impl MainView {
                 cx.notify();
             }
         }
+    }
+
+    /// 密码弹窗：点击密码本条目后填入并立即尝试。
+    pub(super) fn select_book_password(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.password_book.entries().get(index).cloned() else {
+            return;
+        };
+        self.password_input.update(cx, |state, cx| {
+            state.set_value(entry.password, window, cx);
+        });
+        self.password_picker_open = false;
+        self.submit_password(cx);
     }
 
     // ------------------------------------------------------------------
@@ -2324,6 +2354,8 @@ fn pending_path(pending: &PendingAction) -> PathBuf {
         | PendingAction::Extract { path, .. }
         | PendingAction::Verify { path } => path.clone(),
         PendingAction::OpenEntry { archive, .. } => archive.clone(),
+        // 运行中任务的密码请求没有独立的归档路径；调用方不会对它调用本函数。
+        PendingAction::Prompt { .. } => PathBuf::new(),
     }
 }
 

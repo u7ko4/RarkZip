@@ -54,7 +54,7 @@ pub use hash::{
     ChecksumFileEntry, HashAlgorithm,
 };
 pub use password::{PasswordBook, PasswordEntry};
-pub use progress::{NoopSink, Phase, Progress, ProgressSink};
+pub use progress::{NoopSink, PasswordPrompt, Phase, Progress, ProgressSink};
 pub use recovery::{
     recover_password, RecoveryControl, RecoveryMode, RecoveryOptions, RecoveryOutcome,
 };

@@ -227,7 +227,8 @@ impl MainView {
                 archive,
                 pending,
                 error,
-            } => self.render_password_modal(archive, pending, error, max_height, cx),
+                message,
+            } => self.render_password_modal(archive, pending, error, message, max_height, cx),
             Modal::Rename { index } => self.render_rename_modal(index, max_height, cx),
             Modal::NewFolder { parent } => self.render_new_folder_modal(&parent, max_height, cx),
             Modal::Comment => self.render_comment_modal(max_height, cx),
@@ -272,6 +273,7 @@ impl MainView {
         archive: PathBuf,
         pending: PendingAction,
         error: Option<String>,
+        message: Option<String>,
         max_height: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -281,22 +283,23 @@ impl MainView {
             PendingAction::Extract { .. } => "解压",
             PendingAction::Verify { .. } => "校验",
             PendingAction::OpenEntry { .. } => "打开文件",
+            PendingAction::Prompt { .. } => "继续解压",
         };
         let archive_name = archive
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| archive.display().to_string());
         let quick_test = rarkzip_engine::supports_quick_password_test(&archive);
-        let hint = if quick_test {
-            "密码本自动尝试失败后才会弹窗；手动输入成功后会自动记入密码本末尾。"
-        } else {
-            "该格式无法快速校验密码，不会自动尝试密码本；输入成功后会记入密码本末尾。"
+        let hint = match &pending {
+            PendingAction::Prompt { .. } => "嵌套/首层压缩包需要密码；输入正确后继续当前解压任务。",
+            _ if quick_test => "密码本自动尝试失败后才会弹窗；手动输入成功后会自动记入密码本末尾。",
+            _ => "该格式无法快速校验密码，不会自动尝试密码本；输入成功后会记入密码本末尾。",
         };
         let mut body = vec![
             div()
                 .text_size(crate::theme::body())
                 .text_color(palette.sub)
-                .child(format!("{action}需要密码：{archive_name}"))
+                .child(message.unwrap_or_else(|| format!("{action}需要密码：{archive_name}")))
                 .into_any_element(),
             crate::components::control_height(Input::new(&self.password_input))
                 .text_size(crate::theme::body())
@@ -308,6 +311,139 @@ impl MainView {
                 .child(hint)
                 .into_any_element(),
         ];
+
+        // 从密码本中选择：列表默认打码，点击条目直接使用该密码。
+        let book: Vec<(String, String)> = self
+            .password_book
+            .entries()
+            .iter()
+            .map(|entry| (entry.note.clone(), entry.password.clone()))
+            .collect();
+        let reveal = self.password_picker_reveal;
+        if book.is_empty() {
+            body.push(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child("密码本为空，可先在密码本页面添加常用密码。")
+                    .into_any_element(),
+            );
+        } else {
+            body.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .debug_selector(|| "password-book-toggle".to_string())
+                            .child(
+                                Button::new("password-book-toggle")
+                                    .label(format!("从密码本选择（{}）", book.len()))
+                                    .icon(icon(IconName::BookOpen, palette.accent, 15.0))
+                                    .outline()
+                                    .h(px(30.0))
+                                    .px(px(12.0))
+                                    .text_size(crate::theme::caption())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.password_picker_open = !this.password_picker_open;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(design::icon_action(
+                        &palette,
+                        "password-book-reveal",
+                        if reveal {
+                            IconName::EyeOff
+                        } else {
+                            IconName::Eye
+                        },
+                        palette.sub,
+                        false,
+                        if reveal {
+                            "隐藏密码"
+                        } else {
+                            "显示密码"
+                        },
+                        cx.listener(|this, _, _, cx| {
+                            this.password_picker_reveal = !this.password_picker_reveal;
+                            cx.notify();
+                        }),
+                    ))
+                    .into_any_element(),
+            );
+            if self.password_picker_open {
+                let count = book.len();
+                let mut list = div()
+                    .id("password-book-list")
+                    .flex()
+                    .flex_col()
+                    .max_h(px(176.0))
+                    .overflow_y_scroll()
+                    .rounded(px(crate::theme::RADIUS_CONTROL))
+                    .border_1()
+                    .border_color(palette.line)
+                    .bg(palette.panel);
+                for (index, (note, password)) in book.iter().enumerate() {
+                    let label = if note.is_empty() {
+                        format!("密码 {}", index + 1)
+                    } else {
+                        note.clone()
+                    };
+                    let shown = if reveal {
+                        password.clone()
+                    } else {
+                        "••••••••".to_string()
+                    };
+                    list = list.child(
+                        div()
+                            .id(format!("password-book-{index}"))
+                            .debug_selector(|| format!("password-book-{index}"))
+                            .role(Role::Button)
+                            .aria_label(label.clone())
+                            .cursor_pointer()
+                            .h(px(34.0))
+                            .px(px(10.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .when(index + 1 < count, |this| {
+                                this.border_b_1().border_color(palette.line)
+                            })
+                            .hover(|style| style.bg(palette.hover))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.select_book_password(index, window, cx);
+                            }))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(crate::theme::caption())
+                                    .text_color(palette.text)
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .font_family("Cascadia Mono")
+                                    .text_size(crate::theme::caption())
+                                    .text_color(palette.muted)
+                                    .child(shown),
+                            ),
+                    );
+                }
+                body.push(list.into_any_element());
+                body.push(
+                    div()
+                        .text_size(crate::theme::caption())
+                        .text_color(palette.muted)
+                        .child("点击密码即可直接尝试，无需再次点“解锁”。")
+                        .into_any_element(),
+                );
+            }
+        }
         if let Some(error) = error {
             body.push(
                 div()
@@ -339,7 +475,9 @@ impl MainView {
             430.0,
             max_height,
             "输入密码",
-            Some(if quick_test {
+            Some(if matches!(pending, PendingAction::Prompt { .. }) {
+                "输入密码后继续当前解压任务。".to_string()
+            } else if quick_test {
                 "按密码本顺序全部失败，请手动输入。".to_string()
             } else {
                 "该格式无法快速试密，请输入密码。".to_string()

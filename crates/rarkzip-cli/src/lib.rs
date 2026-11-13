@@ -1230,6 +1230,17 @@ impl ProgressSink for ConsoleSink {
     fn is_cancelled(&self) -> bool {
         CANCELLED.load(Ordering::Relaxed)
     }
+
+    fn request_password(&self, prompt: &rarkzip_engine::PasswordPrompt) -> Option<String> {
+        if !std::io::stdin().is_terminal() {
+            return None;
+        }
+        eprintln!("{}", prompt.message);
+        match rpassword::prompt_password("密码（留空跳过）：") {
+            Ok(password) if !password.is_empty() => Some(password),
+            _ => None,
+        }
+    }
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {

@@ -38,3 +38,8 @@ windows = { version = "0.62.2", features = [
 
 [build-dependencies]
 embed-resource = "3.0.12"
+
+[dev-dependencies]
+# 只启用 GPUI 核心测试窗口能力，避免 gpui-kit/test-support 引入 gpui-fast。
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+tempfile = "3.27.0"

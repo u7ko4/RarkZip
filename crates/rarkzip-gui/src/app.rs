@@ -341,6 +341,11 @@ enum PendingAction {
         index: usize,
         entry: String,
     },
+    /// 正在运行的任务请求密码：把输入送回阻塞中的工作线程。
+    Prompt {
+        task_id: u64,
+        responder: Sender<Option<String>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -349,6 +354,8 @@ enum Modal {
         archive: PathBuf,
         pending: PendingAction,
         error: Option<String>,
+        /// 嵌套层等场景下由引擎给出的提示文本。
+        message: Option<String>,
     },
     Rename {
         index: usize,
@@ -567,6 +574,10 @@ pub struct MainView {
     password_new: Entity<InputState>,
     password_note: Entity<InputState>,
     password_reveal: bool,
+    /// 密码弹窗中“从密码本选择”列表是否展开。
+    password_picker_open: bool,
+    /// 密码弹窗中的密码本列表默认显示明文，可手动隐藏。
+    password_picker_reveal: bool,
     recovery_path: Option<PathBuf>,
     recovery_mode: RecoveryUiMode,
     recovery_dictionary: Vec<String>,
@@ -822,6 +833,8 @@ impl MainView {
             password_new,
             password_note,
             password_reveal: false,
+            password_picker_open: false,
+            password_picker_reveal: true,
             recovery_path: None,
             recovery_mode: RecoveryUiMode::Dictionary,
             recovery_dictionary: Vec::new(),
@@ -1099,6 +1112,47 @@ impl MainView {
                     task.detail = message;
                 }
             }
+            TaskEvent::PasswordPrompt {
+                id,
+                prompt,
+                responder,
+            } => {
+                let cancelled = self
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == id)
+                    .is_some_and(|task| task.cancel.load(Ordering::Relaxed));
+                // 主窗口一次只显示一个密码框；另一个任务已经在等密码时，
+                // 放弃这一个，避免两个工作线程互相等待。
+                let already_prompting = matches!(
+                    &self.modal,
+                    Some(Modal::Password {
+                        pending: PendingAction::Prompt { .. },
+                        ..
+                    })
+                );
+                if cancelled || already_prompting {
+                    let _ = responder.send(None);
+                } else {
+                    if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
+                        // 不使用含“密码”的阶段名，避免任务卡片把等待中的
+                        // 密码请求误当成后台自动试密。
+                        task.phase = "等待输入".to_string();
+                        task.detail = prompt.message.clone();
+                    }
+                    self.modal = Some(Modal::Password {
+                        archive: prompt.archive.clone(),
+                        pending: PendingAction::Prompt {
+                            task_id: id,
+                            responder,
+                        },
+                        error: (prompt.attempt > 1).then(|| "密码错误，请重试".to_string()),
+                        message: Some(prompt.message.clone()),
+                    });
+                    self.password_picker_open = false;
+                    self.password_picker_reveal = true;
+                }
+            }
             TaskEvent::Finished { id, result } => {
                 self.finish_task(id, result, cx);
             }
@@ -1107,6 +1161,7 @@ impl MainView {
     }
 
     fn finish_task(&mut self, id: u64, result: JobResult, cx: &mut Context<Self>) {
+        self.dismiss_prompt_for_task(id);
         let cancel_state = self
             .tasks
             .iter()
@@ -1451,11 +1506,26 @@ impl MainView {
         error: Option<String>,
         _cx: &mut Context<Self>,
     ) {
+        // 已有任务在等待密码回复时，不要用普通密码框覆盖它，否则该任务
+        // 的工作线程会一直阻塞在密码请求上。
+        let prompt_open = matches!(
+            &self.modal,
+            Some(Modal::Password {
+                pending: PendingAction::Prompt { .. },
+                ..
+            })
+        );
+        if prompt_open && !matches!(&pending, PendingAction::Prompt { .. }) {
+            return;
+        }
         self.modal = Some(Modal::Password {
             archive,
             pending,
             error,
+            message: None,
         });
+        self.password_picker_open = false;
+        self.password_picker_reveal = true;
     }
 
     fn show_toast(&mut self, message: impl Into<String>, kind: ToastKind, cx: &mut Context<Self>) {
@@ -1797,9 +1867,40 @@ impl MainView {
     }
 
     fn close_modal(&mut self, cx: &mut Context<Self>) {
-        self.modal = None;
+        self.dismiss_modal();
         self.new_draft = None;
         cx.notify();
+    }
+
+    /// 关闭弹窗；如果关闭的是运行中任务的密码请求，通知工作线程放弃。
+    fn dismiss_modal(&mut self) {
+        if let Some(Modal::Password {
+            pending: PendingAction::Prompt { responder, .. },
+            ..
+        }) = self.modal.clone()
+        {
+            let _ = responder.send(None);
+        }
+        self.modal = None;
+        self.password_picker_open = false;
+    }
+
+    fn dismiss_prompt_for_task(&mut self, task_id: u64) {
+        if let Some(Modal::Password {
+            pending:
+                PendingAction::Prompt {
+                    task_id: pending_id,
+                    responder,
+                },
+            ..
+        }) = self.modal.clone()
+        {
+            if pending_id == task_id {
+                let _ = responder.send(None);
+                self.modal = None;
+                self.password_picker_open = false;
+            }
+        }
     }
 
     fn close_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1809,7 +1910,7 @@ impl MainView {
             return;
         }
         self.page = Page::Main;
-        self.modal = None;
+        self.dismiss_modal();
         self.new_draft = None;
         cx.notify();
     }
@@ -2905,3 +3006,112 @@ fn render_toast(
 
 // The remaining stage-specific methods are implemented in app/impls.rs.
 mod impls;
+
+#[cfg(test)]
+mod ui_tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use gpui_kit::{point, AppContext, Modifiers, TestAppContext, VisualTestContext};
+    use rarkzip_engine::PasswordBook;
+
+    use super::{MainView, Modal, PendingAction};
+
+    struct LocalAppDataGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl LocalAppDataGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for LocalAppDataGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+        }
+    }
+
+    fn pump(visual: &mut VisualTestContext) {
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    /// 主窗口密码弹窗：展开密码本并点击条目后，密码应送回等待中的任务。
+    #[cfg(debug_assertions)]
+    #[gpui_kit::test]
+    fn password_modal_book_picker_sends_selected_password(cx: &mut TestAppContext) {
+        let _serial = crate::UI_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let _env = LocalAppDataGuard::set(temp.path());
+        cx.update(gpui_kit::init);
+
+        let (view, visual) =
+            cx.add_window_view(|window, cx| MainView::new(window, cx, None, None, None));
+        pump(visual);
+
+        let (responder, receiver) = crossbeam_channel::unbounded();
+        let mut book = PasswordBook::load(temp.path().join("passwords.json"));
+        book.add("book-pass", "测试密码");
+        visual.update(|_, app| {
+            view.update(app, |view, cx| {
+                view.password_book = book;
+                view.password_picker_open = false;
+                view.modal = Some(Modal::Password {
+                    archive: PathBuf::from("nested.rar"),
+                    pending: PendingAction::Prompt {
+                        task_id: 42,
+                        responder,
+                    },
+                    error: None,
+                    message: Some("嵌套压缩包需要密码".to_string()),
+                });
+                cx.notify();
+            });
+        });
+        pump(visual);
+        assert!(
+            visual.read_entity(&view, |view, _| view.password_picker_reveal),
+            "密码本列表应默认显示明文"
+        );
+
+        let toggle = visual
+            .debug_bounds("password-book-toggle")
+            .expect("主窗口密码本选择按钮未渲染");
+        visual.simulate_click(
+            point(toggle.center().x, toggle.center().y),
+            Modifiers::default(),
+        );
+        pump(visual);
+        assert!(
+            visual.read_entity(&view, |view, _| view.password_picker_open),
+            "主窗口密码本列表未展开"
+        );
+
+        let row = visual
+            .debug_bounds("password-book-0")
+            .expect("主窗口密码本条目未渲染");
+        visual.simulate_click(point(row.center().x, row.center().y), Modifiers::default());
+        pump(visual);
+
+        assert!(
+            visual.read_entity(&view, |view, _| view.modal.is_none()),
+            "选择密码后密码弹窗未关闭"
+        );
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_millis(500)).unwrap(),
+            Some("book-pass".to_string()),
+            "选择密码后没有把密码送回任务线程"
+        );
+    }
+}

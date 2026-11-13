@@ -99,22 +99,90 @@ pub struct VerifyReport {
     pub bytes: u64,
 }
 
+/// 解析用户选中的文件：补齐分卷、去除 apate 伪装，返回可直接交给后端的路径。
+struct PayloadResolution {
+    open_path: PathBuf,
+    disguised: bool,
+    note: Option<String>,
+}
+
+fn resolve_payload(path: &Path) -> Result<PayloadResolution> {
+    let set = crate::volumes::detect(path)?;
+    let members = set
+        .as_ref()
+        .map(|set| set.members.clone())
+        .unwrap_or_else(|| vec![path.to_path_buf()]);
+    let first = &members[0];
+
+    // apate 伪装：只有第一卷的倒序原头能校验出归档签名，后续卷从数据中间
+    // 开始，因此统一以第一卷为准；还原时逐卷处理。
+    if let Some(apate) = crate::disguise::detect_apate(first, true)? {
+        let format = apate.format.unwrap_or(ArchiveFormat::Zip);
+        let open_path = crate::disguise::reveal_set(&members, format)?;
+        let mut note = "已去除 apate 伪装，使用临时还原副本".to_string();
+        if members.len() > 1 {
+            note.push_str(&format!("；已合并 {} 个分卷", members.len()));
+        }
+        return Ok(PayloadResolution {
+            open_path,
+            disguised: true,
+            note: Some(note),
+        });
+    }
+
+    if let Some(set) = set {
+        // 名称里有归档标记，或第一卷内容本身就是归档，才按分卷处理；
+        // `IMG001.jpg / IMG002.jpg` 这样的同名序号文件不会被误合并。
+        let sniffed = crate::sniff::sniff(first)?;
+        let named = crate::volumes::name_format(first).is_some()
+            || crate::volumes::looks_like_archive_volume_name(first);
+        let content_archive = sniffed
+            .as_ref()
+            .is_some_and(|sniffed| sniffed.format != ArchiveFormat::Unknown);
+        if set.is_rar()
+            || sniffed
+                .as_ref()
+                .is_some_and(|sniffed| sniffed.format == ArchiveFormat::Rar)
+        {
+            let first_part = crate::rar_backend::first_part(first);
+            return Ok(PayloadResolution {
+                open_path: first_part,
+                disguised: false,
+                note: Some("使用 RAR 分卷读取".to_string()),
+            });
+        }
+        if !named && !content_archive {
+            return Ok(PayloadResolution {
+                open_path: path.to_path_buf(),
+                disguised: false,
+                note: None,
+            });
+        }
+        let open_path = crate::volumes::merge(&members)?;
+        return Ok(PayloadResolution {
+            open_path,
+            note: Some(format!(
+                "已将 {} 个分卷合并为临时归档（原始分卷保持只读）",
+                members.len()
+            )),
+            disguised: false,
+        });
+    }
+
+    Ok(PayloadResolution {
+        open_path: path.to_path_buf(),
+        disguised: false,
+        note: None,
+    })
+}
+
 /// 识别并打开归档，返回条目清单。列表阶段通常不需要密码（7z 头加密除外）。
 pub fn open_archive(path: &Path, options: &OpenOptions) -> Result<ArchiveInfo> {
     if !path.exists() {
         return Err(EngineError::NotFound(path.to_path_buf()));
     }
-    let volume = crate::volumes::resolve(path)?;
-    let payload = if volume.is_none() {
-        crate::disguise::resolve_payload(path)?
-    } else {
-        None
-    };
-    let read_path = volume
-        .as_ref()
-        .map(|set| set.payload.as_path())
-        .or(payload.as_deref())
-        .unwrap_or(path);
+    let payload = resolve_payload(path)?;
+    let read_path = payload.open_path.as_path();
     let mut sniffed = sniff::sniff(read_path)?
         .ok_or_else(|| EngineError::UnsupportedFormat("无法识别的归档内容".to_string()))?;
     sniff::ensure_supported(&sniffed)?;
@@ -177,14 +245,12 @@ pub fn open_archive(path: &Path, options: &OpenOptions) -> Result<ArchiveInfo> {
     info.payload_path = sfx_payload
         .clone()
         .unwrap_or_else(|| read_path.to_path_buf());
-    info.disguised = payload.is_some();
+    info.disguised = payload.disguised;
     info.format = sniffed.format;
     info.protected_container = sniffed.protected_container || sniff::is_protected_container(path);
     info.payload_offset = sniffed.payload_offset;
-    if let Some(volume) = &volume {
-        info.note = Some(volume.note());
-    } else if info.disguised {
-        info.note = Some("已去除 apate 伪装，使用临时还原副本".to_string());
+    if payload.note.is_some() {
+        info.note = payload.note;
     } else if info.note.is_none() {
         info.note = sniffed.note;
     }
@@ -235,15 +301,29 @@ fn extract_7z_sfx_payload(path: &Path, offset: u64) -> Result<PathBuf> {
     Ok(dest)
 }
 
-/// 扫描解压产物时使用的内容探测；包含 apate 伪装识别，但不返回完整清单。
+/// 扫描解压产物时使用的内容探测；包含 apate 伪装与分卷识别，但不实际
+/// 还原/合并大文件。
 pub fn probe_archive(path: &Path) -> Result<Option<ArchiveFormat>> {
+    if let Some(set) = crate::volumes::detect(path)? {
+        let first = set.first();
+        if let Some(apate) = crate::disguise::detect_apate(first, true)? {
+            return Ok(apate.format);
+        }
+        if let Some(sniffed) = sniff::sniff_with_window(first, 64 * 1024)? {
+            if sniffed.format != ArchiveFormat::Unknown {
+                return Ok(Some(sniffed.format));
+            }
+        }
+        if let Some(format) = crate::volumes::name_format(first) {
+            return Ok(Some(format));
+        }
+        return Ok(None);
+    }
+    if let Some(apate) = crate::disguise::detect_apate(path, true)? {
+        return Ok(apate.format);
+    }
     if let Some(sniffed) = sniff::sniff_with_window(path, 64 * 1024)? {
         if sniffed.format != ArchiveFormat::Unknown {
-            return Ok(Some(sniffed.format));
-        }
-    }
-    if let Some(payload) = crate::disguise::resolve_payload(path)? {
-        if let Some(sniffed) = sniff::sniff(&payload)? {
             return Ok(Some(sniffed.format));
         }
     }
@@ -255,17 +335,8 @@ pub fn verify_archive(
     password: Option<&str>,
     sink: &dyn ProgressSink,
 ) -> Result<VerifyReport> {
-    let volume = crate::volumes::resolve(path)?;
-    let payload = if volume.is_none() {
-        crate::disguise::resolve_payload(path)?
-    } else {
-        None
-    };
-    let read_path = volume
-        .as_ref()
-        .map(|set| set.payload.as_path())
-        .or(payload.as_deref())
-        .unwrap_or(path);
+    let payload = resolve_payload(path)?;
+    let read_path = payload.open_path.as_path();
     let sniffed = sniff::sniff(read_path)?
         .ok_or_else(|| EngineError::UnsupportedFormat("无法识别的归档内容".to_string()))?;
     sniff::ensure_supported(&sniffed)?;
@@ -320,17 +391,8 @@ pub fn supports_quick_password_test(path: &Path) -> bool {
 
 /// 快速判断密码是否正确；只解最小加密条目，避免整包试跑。
 pub fn test_password(path: &Path, password: &str) -> Result<bool> {
-    let volume = crate::volumes::resolve(path)?;
-    let payload = if volume.is_none() {
-        crate::disguise::resolve_payload(path)?
-    } else {
-        None
-    };
-    let read_path = volume
-        .as_ref()
-        .map(|set| set.payload.as_path())
-        .or(payload.as_deref())
-        .unwrap_or(path);
+    let payload = resolve_payload(path)?;
+    let read_path = payload.open_path.as_path();
     let sniffed = sniff::sniff(read_path)?
         .ok_or_else(|| EngineError::UnsupportedFormat("无法识别的归档内容".to_string()))?;
     sniff::ensure_supported(&sniffed)?;

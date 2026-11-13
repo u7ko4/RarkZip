@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crossbeam_channel::Sender;
+use crossbeam_channel::{RecvTimeoutError, Sender};
 use rarkzip_engine::{
     ArchiveInfo, CreateOptions, CreateOutcome, EngineError, ExtractOptions, ExtractOutcome,
-    HashAlgorithm, Phase, Progress, ProgressSink, VerifyReport,
+    HashAlgorithm, PasswordPrompt, Phase, Progress, ProgressSink, VerifyReport,
 };
 
 #[derive(Debug, Clone)]
@@ -113,6 +113,11 @@ pub enum TaskEvent {
         id: u64,
         message: String,
     },
+    PasswordPrompt {
+        id: u64,
+        prompt: PasswordPrompt,
+        responder: Sender<Option<String>>,
+    },
     Finished {
         id: u64,
         result: JobResult,
@@ -150,5 +155,35 @@ impl ProgressSink for GuiSink {
 
     fn is_cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// 密码本/父层密码失效时，阻塞任务线程等待主窗口输入密码。
+    fn request_password(&self, prompt: &PasswordPrompt) -> Option<String> {
+        if self.cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        let (responder, receiver) = crossbeam_channel::unbounded();
+        if self
+            .sender
+            .send(TaskEvent::PasswordPrompt {
+                id: self.id,
+                prompt: prompt.clone(),
+                responder,
+            })
+            .is_err()
+        {
+            return None;
+        }
+        loop {
+            match receiver.recv_timeout(std::time::Duration::from_millis(120)) {
+                Ok(value) => return value,
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.cancel.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => return None,
+            }
+        }
     }
 }

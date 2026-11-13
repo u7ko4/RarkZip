@@ -848,3 +848,7 @@ fn ensure_console() {
 
 #[cfg(not(windows))]
 fn ensure_console() {}
+
+/// UI 测试会临时改写 LOCALAPPDATA；同一测试进程内串行执行，避免互相影响。
+#[cfg(test)]
+pub(crate) static UI_TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
