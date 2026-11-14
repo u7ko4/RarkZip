@@ -18,7 +18,7 @@ image = "0.25.9"
 rarkzip-cli = { path = "../rarkzip-cli" }
 rarkzip-crypt = { path = "../rarkzip-crypt" }
 rarkzip-engine = { path = "../rarkzip-engine" }
-rarkzip-shell = { version = "0.1.0", path = "../rarkzip-shell" }
+rarkzip-shell = { version = "0.1.1", path = "../rarkzip-shell" }
 open = "5.4.5"
 raw-window-handle = "0.6.2"
 rfd = "0.17.2"

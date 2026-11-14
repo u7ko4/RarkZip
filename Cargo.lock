@@ -6518,7 +6518,7 @@ checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
 
 [[package]]
 name = "rarkzip-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "ctrlc",
@@ -6533,7 +6533,7 @@ dependencies = [
 
 [[package]]
 name = "rarkzip-crypt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "argon2",
@@ -6571,7 +6571,7 @@ dependencies = [
 
 [[package]]
 name = "rarkzip-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -6611,7 +6611,7 @@ dependencies = [
 
 [[package]]
 name = "rarkzip-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -6635,7 +6635,7 @@ dependencies = [
 
 [[package]]
 name = "rarkzip-shell"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "rarkzip-engine",
