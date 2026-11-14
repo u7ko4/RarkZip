@@ -16,6 +16,7 @@ RarkZip combines everyday archive browsing and editing with smart extraction, ne
 - **Password support** — password book protected with Windows DPAPI, quick password verification, automatic retry, and password recovery.
 - **Hash workspace** — MD5, SHA-1, SHA-256, SHA-512, SHA3-256, BLAKE3, xxHash64, and CRC32; batch hashing, verification, clipboard actions, and checksum export.
 - **Encryption workspace** — an independent window for file/folder encryption, text encryption, and JPEG steganography, with nine cipher choices, Argon2id key derivation, and compatible legacy containers.
+- **Signature workspace** — GnuPG-compatible signature creation and verification with local public and private keyrings; supports detached and clearsigned files.
 - **Safety first** — path traversal protection, unsafe link filtering, Mark-of-the-Web propagation, recycle-bin deletion, and optional AMSI scanning.
 - **Explorer integration** — file associations, single/multi-selection context menus, and an optional preview handler.
 - **Native desktop UI** — light/dark themes, accent colors, multiple windows, 20 interface languages, and high-DPI support.
