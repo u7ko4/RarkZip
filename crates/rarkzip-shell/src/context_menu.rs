@@ -331,7 +331,9 @@ mod imp {
     ) {
         let keys = &settings.integration.compress_verbs;
         let single = paths.len() == 1;
-        let all_files = paths.iter().all(|path| path.is_file());
+        // 独立压缩只用于“多个文件夹”：单个文件夹用普通压缩即可；
+        // 多个文件或文件夹/文件混合时目标语义不明确，均隐藏。
+        let multiple_dirs = !single && !paths.is_empty() && paths.iter().all(|path| path.is_dir());
         let dir = parent_dir(paths);
         let base = archive_base(paths);
         let target = |extension: &str| unique_target(&dir, &base, extension);
@@ -393,17 +395,10 @@ mod imp {
                     format!("压缩为“{}”", unique_target(&dir, &full_name, extension)),
                     MenuAction::QuickCompress(extension, false),
                 );
-            } else if !single && all_files {
-                add_action(
-                    labels,
-                    actions,
-                    format!("压缩为独立的“文件名.{extension}”"),
-                    MenuAction::EachCompress(extension),
-                );
             }
         }
 
-        if !single && enabled("each_zip", keys) {
+        if multiple_dirs && enabled("each_zip", keys) {
             add_action(
                 labels,
                 actions,
@@ -411,7 +406,7 @@ mod imp {
                 MenuAction::EachCompress("zip"),
             );
         }
-        if !single && enabled("each_7z", keys) {
+        if multiple_dirs && enabled("each_7z", keys) {
             add_action(
                 labels,
                 actions,
@@ -867,7 +862,7 @@ mod tests {
     use rarkzip_engine::Settings;
     use std::path::PathBuf;
 
-    fn settings() -> Settings {
+    pub(super) fn settings() -> Settings {
         let mut settings = Settings::default();
         settings.integration.associations = vec!["zip".to_string(), "7z".to_string()];
         settings.integration.extract_verbs = [
@@ -903,7 +898,7 @@ mod tests {
         settings
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
+    pub(super) fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("rarkzip-cm-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
@@ -949,7 +944,7 @@ mod tests {
             .iter()
             .any(|label| label == "智能解压到独立文件夹(&S)"));
         assert!(labels.iter().any(|label| label == "解压到独立文件夹"));
-        assert!(labels.iter().any(|label| label.contains("独立的")));
+        assert!(!labels.iter().any(|label| label.contains("压缩为独立的")));
         assert!(labels.iter().any(|label| label.contains("压缩为“")));
         assert!(!labels.iter().any(|label| label.contains("(2)")));
         assert!(labels.iter().any(|label| label == "计算所选文件的哈希…"));
@@ -990,7 +985,7 @@ mod tests {
         let (labels, actions) = build_actions(&[archive, pdf, csv], &settings());
         assert_eq!(actions.len(), labels.len());
         assert!(labels[0].contains("压缩为“"), "{labels:?}");
-        assert!(labels.iter().any(|label| label.contains("独立的")));
+        assert!(!labels.iter().any(|label| label.contains("压缩为独立的")));
         assert!(!labels.iter().any(|label| label.contains("解压到")));
         assert!(labels.iter().any(|label| label == "计算所选文件的哈希…"));
     }
@@ -1041,5 +1036,56 @@ mod tests {
         let _ = std::fs::write(&file, b"a");
         let (labels, _) = build_actions(&[file], &settings);
         assert!(!labels.iter().any(|label| label.contains("哈希")));
+    }
+}
+
+#[cfg(test)]
+mod each_compression_tests {
+    use super::imp::{build_actions, MenuAction};
+    use super::tests::{settings, temp_dir};
+
+    #[test]
+    fn each_compression_only_for_multiple_directories() {
+        let dir = temp_dir("each-kind");
+        let folder_a = dir.join("a");
+        let folder_b = dir.join("b");
+        let file_a = dir.join("a.txt");
+        let file_b = dir.join("b.txt");
+        std::fs::create_dir_all(&folder_a).unwrap();
+        std::fs::create_dir_all(&folder_b).unwrap();
+        std::fs::write(&file_a, b"a").unwrap();
+        std::fs::write(&file_b, b"b").unwrap();
+        let settings = settings();
+
+        // 单个文件夹：普通压缩已覆盖，不显示“独立的”。
+        let (labels, _) = build_actions(std::slice::from_ref(&folder_a), &settings);
+        assert!(
+            !labels.iter().any(|label| label.contains("独立的")),
+            "{labels:?}"
+        );
+
+        // 文件夹 + 文件混合：不显示“独立的”。
+        let (labels, _) = build_actions(&[folder_a.clone(), file_a.clone()], &settings);
+        assert!(
+            !labels.iter().any(|label| label.contains("独立的")),
+            "{labels:?}"
+        );
+
+        // 多个文件夹：显示独立压缩。
+        let (labels, actions) = build_actions(&[folder_a, folder_b], &settings);
+        assert!(
+            labels.iter().any(|label| label.contains("独立的")),
+            "{labels:?}"
+        );
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, MenuAction::EachCompress(_))));
+
+        // 多个文件：不显示独立压缩。
+        let (labels, _) = build_actions(&[file_a, file_b], &settings);
+        assert!(
+            !labels.iter().any(|label| label.contains("压缩为独立的")),
+            "{labels:?}"
+        );
     }
 }
