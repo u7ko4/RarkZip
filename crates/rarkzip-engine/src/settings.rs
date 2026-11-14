@@ -306,6 +306,31 @@ impl Default for CryptSettings {
     }
 }
 
+/// OpenPGP 签名工具的默认选项与上次使用目录。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SignatureSettings {
+    /// 上次选择签名文件的位置。
+    pub last_signature_dir: Option<String>,
+    /// 上次选择被签名文件的位置。
+    pub last_data_dir: Option<String>,
+    /// 上次导入密钥的位置。
+    pub last_key_dir: Option<String>,
+    /// 是否默认生成 ASCII armor 签名（.asc）。
+    pub sign_armor: bool,
+}
+
+impl Default for SignatureSettings {
+    fn default() -> Self {
+        Self {
+            last_signature_dir: None,
+            last_data_dir: None,
+            last_key_dir: None,
+            sign_armor: true,
+        }
+    }
+}
+
 /// Windows 资源管理器集成：文件关联与右键菜单。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -445,6 +470,7 @@ pub struct Settings {
     pub integration: IntegrationSettings,
     pub hash: HashSettings,
     pub crypt: CryptSettings,
+    pub signature: SignatureSettings,
     pub ui: UiSettings,
 }
 
