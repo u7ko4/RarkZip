@@ -262,6 +262,50 @@ impl Default for HashSettings {
     }
 }
 
+/// 文件与文本加密工具的默认选项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CryptSettings {
+    /// 算法代码：0=AES-256，1=RC6，2=Serpent，4=Twofish，5=GOST，
+    /// 6=Blowfish-448，7=Threefish-1024，8=SHACAL-2，9=C4-2048。
+    pub algorithm: u8,
+    /// 文本输出编码：0=Base64，1=Base32，2=纯数字。
+    pub text_encoding: u8,
+    /// 文本加密时使用 LZMA 压缩。
+    pub text_compression: bool,
+    /// 每 N 个字符插入一个空格；0 表示关闭。
+    pub add_space_every: u8,
+    /// 文件压缩：0=自动，1=始终，2=不压缩。
+    pub file_compression: u8,
+    /// 自定义输出目录；为空时输出到源文件旁边。
+    pub output_dir: Option<String>,
+    /// 隐写 JPEG 质量（1-100）。
+    pub stego_quality: u8,
+    /// 隐写载体长边上限；0 表示不缩放。
+    pub stego_max_side: u32,
+    /// 上次选择文件的位置。
+    pub last_file_dir: Option<String>,
+    /// 上次选择隐写载体的位置。
+    pub last_stego_dir: Option<String>,
+}
+
+impl Default for CryptSettings {
+    fn default() -> Self {
+        Self {
+            algorithm: 0,
+            text_encoding: 0,
+            text_compression: true,
+            add_space_every: 0,
+            file_compression: 0,
+            output_dir: None,
+            stego_quality: 90,
+            stego_max_side: 1000,
+            last_file_dir: None,
+            last_stego_dir: None,
+        }
+    }
+}
+
 /// Windows 资源管理器集成：文件关联与右键菜单。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -400,6 +444,7 @@ pub struct Settings {
     pub advanced: AdvancedSettings,
     pub integration: IntegrationSettings,
     pub hash: HashSettings,
+    pub crypt: CryptSettings,
     pub ui: UiSettings,
 }
 
