@@ -12,3 +12,4 @@
 /.zcode
 # Local regression/build helper scripts
 /scripts
+/local
