@@ -15,6 +15,7 @@ RarkZip combines everyday archive browsing and editing with smart extraction, ne
 - **Nested archives** — detects archives inside extracted files and expands them recursively, reusing an already verified password across layers.
 - **Password support** — password book protected with Windows DPAPI, quick password verification, automatic retry, and password recovery.
 - **Hash workspace** — MD5, SHA-1, SHA-256, SHA-512, SHA3-256, BLAKE3, xxHash64, and CRC32; batch hashing, verification, clipboard actions, and checksum export.
+- **Encryption workspace** — an independent window for file/folder encryption, text encryption, and JPEG steganography, with nine cipher choices, Argon2id key derivation, and compatible legacy containers.
 - **Safety first** — path traversal protection, unsafe link filtering, Mark-of-the-Web propagation, recycle-bin deletion, and optional AMSI scanning.
 - **Explorer integration** — file associations, single/multi-selection context menus, and an optional preview handler.
 - **Native desktop UI** — light/dark themes, accent colors, multiple windows, 20 interface languages, and high-DPI support.
@@ -28,6 +29,7 @@ RarkZip combines everyday archive browsing and editing with smart extraction, ne
 | Create | ZIP, 7z, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.ZST, GZ, BZ2, XZ, ZST, SFX ZIP |
 | Split / multi-volume | `.zip.001`, `.7z.001`, `.part1.rar`, `.r00`, and related formats |
 | Encryption | ZIP AES-256 and compatible ZipCrypto, 7z AES-256 with optional header encryption |
+| File/text encryption | `.enc` v4 (reads v2/v3), text v3 (reads v2), JPEG F5 steganography |
 
 > WIM, CAB, ARJ, and ASAR support requires 7-Zip or NanaZip to be installed.
 
