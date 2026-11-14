@@ -13,6 +13,7 @@ pub(crate) enum DropdownKind {
     SettingsSkin,
     NewFormat,
     NewZipAlgorithm,
+    NewVolumeSize,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +91,7 @@ const ZIP_ALGORITHMS: [ZipAlgorithm; 4] = [
     ZipAlgorithm::Zstd,
 ];
 const MEMORY_OPTIONS: [u32; 4] = [1024, 2048, 4096, 8192];
+const VOLUME_SIZES: [u32; 10] = [0, 10, 50, 100, 200, 500, 700, 1024, 2048, 4096];
 const CODEPAGES: &[Codepage] = &Codepage::ALL;
 const THEME_MODES: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
 
@@ -220,6 +222,17 @@ impl MainView {
                     })
                     .collect()
             }
+            DropdownKind::NewVolumeSize => {
+                let current = self
+                    .new_draft
+                    .as_ref()
+                    .map(|draft| draft.volume_size_mb)
+                    .unwrap_or(0);
+                VOLUME_SIZES
+                    .iter()
+                    .map(|mb| DropdownOption::new(volume_size_label(*mb), *mb == current))
+                    .collect()
+            }
         }
     }
 
@@ -294,6 +307,7 @@ impl MainView {
                             if let Some(draft) = &mut self.new_draft {
                                 draft.format = ArchiveFormat::Zip;
                                 draft.sfx = true;
+                                draft.volume_size_mb = 0;
                                 draft.error = None;
                             }
                             crate::app::impls::ensure_sfx_name(&name)
@@ -308,6 +322,14 @@ impl MainView {
                 if let Some(algorithm) = ZIP_ALGORITHMS.get(index).copied() {
                     if let Some(draft) = &mut self.new_draft {
                         draft.zip_algorithm = algorithm;
+                    }
+                }
+            }
+            DropdownKind::NewVolumeSize => {
+                if let Some(mb) = VOLUME_SIZES.get(index).copied() {
+                    if let Some(draft) = &mut self.new_draft {
+                        draft.volume_size_mb = mb;
+                        draft.error = None;
                     }
                 }
             }
@@ -393,6 +415,7 @@ impl MainView {
             let entity = cx.entity();
             let mut row = div()
                 .id(format!("dropdown-{}-{index}", kind.key()))
+                .debug_selector(|| format!("dropdown-{}-{index}", kind.key()))
                 .role(Role::Button)
                 .aria_label(label.clone())
                 .h(px(30.0))
@@ -475,7 +498,18 @@ impl DropdownKind {
             Self::SettingsSkin => "skin",
             Self::NewFormat => "new-format",
             Self::NewZipAlgorithm => "new-zip-algorithm",
+            Self::NewVolumeSize => "new-volume-size",
         }
+    }
+}
+
+pub(crate) fn volume_size_label(mb: u32) -> String {
+    if mb == 0 {
+        "不分卷".to_string()
+    } else if mb >= 1024 && mb % 1024 == 0 {
+        format!("{} GB", mb / 1024)
+    } else {
+        format!("{mb} MB")
     }
 }
 

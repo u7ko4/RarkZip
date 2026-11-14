@@ -1121,6 +1121,7 @@ impl MainView {
             output_dir,
             zip_algorithm: ZipAlgorithm::Deflate,
             sfx: false,
+            volume_size_mb: 0,
             error: None,
         });
         self.feature_result = None;
@@ -1220,6 +1221,7 @@ impl MainView {
         let test_after = draft.test_after;
         let delete_sources = draft.delete_sources;
         let zip_algorithm = draft.zip_algorithm;
+        let volume_size_mb = if sfx { 0 } else { draft.volume_size_mb };
         let output_dir = draft
             .output_dir
             .clone()
@@ -1283,6 +1285,7 @@ impl MainView {
             test_after: test_after || delete_sources,
             delete_sources,
             sfx,
+            volume_size: (volume_size_mb > 0).then(|| volume_size_mb as u64 * 1024 * 1024),
         };
         self.modal = None;
         self.new_draft = None;
@@ -1331,11 +1334,7 @@ impl MainView {
             }
             let _ = sender.send(TaskEvent::Finished {
                 id,
-                result: JobResult::Create {
-                    dest,
-                    password,
-                    result,
-                },
+                result: JobResult::Create { password, result },
             });
         });
         self.show_toast("压缩任务已开始", ToastKind::Info, cx);

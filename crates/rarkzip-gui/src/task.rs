@@ -86,7 +86,6 @@ pub enum JobResult {
         result: Result<ExtractOutcome, EngineError>,
     },
     Create {
-        dest: PathBuf,
         password: Option<String>,
         result: Result<CreateOutcome, EngineError>,
     },

@@ -3108,6 +3108,7 @@ impl MainView {
         let output_dir = default_output_dir(draft);
         let include_root = draft.include_root;
         let zip_algorithm = draft.zip_algorithm;
+        let volume_size_mb = draft.volume_size_mb;
         let password = self.new_password.read(cx).unmask_value().to_string();
         let name_value = self.new_name.read(cx).value().to_string();
         let advanced_open = self.new_advanced_open;
@@ -3330,7 +3331,7 @@ impl MainView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(design::field_label(&palette, "格式 / 分卷"))
+                    .child(design::field_label(&palette, "压缩格式"))
                     .child(self.track_dropdown(
                         DropdownKind::NewFormat,
                         format_control.into_any_element(),
@@ -3374,6 +3375,78 @@ impl MainView {
                     .child("仅存储 0")
                     .child("极限 9"),
             );
+
+        let volume_label = crate::app::dropdown::volume_size_label(volume_size_mb);
+        let volume_control: AnyElement = if sfx {
+            div()
+                .h(px(36.0))
+                .w_full()
+                .flex()
+                .items_center()
+                .px(px(13.0))
+                .rounded(px(crate::theme::RADIUS_CONTROL))
+                .border_1()
+                .border_color(palette.line)
+                .bg(palette.panel)
+                .text_size(crate::theme::body())
+                .text_color(palette.muted)
+                .child("SFX 不支持分卷")
+                .into_any_element()
+        } else {
+            let entity = cx.entity();
+            let control = div()
+                .id("new-volume-size")
+                .debug_selector(|| "new-volume-size".to_string())
+                .role(Role::Button)
+                .aria_label(volume_label.clone())
+                .h(px(36.0))
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px(px(13.0))
+                .rounded(px(crate::theme::RADIUS_CONTROL))
+                .border_1()
+                .border_color(palette.line_strong)
+                .bg(palette.bg)
+                .cursor_pointer()
+                .text_size(crate::theme::body())
+                .hover(|style| style.border_color(palette.accent))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.open_dropdown(DropdownKind::NewVolumeSize, cx);
+                }))
+                .on_a11y_action(AccessibleAction::Click, move |_, _, app| {
+                    entity.update(app, |this, cx| {
+                        this.open_dropdown(DropdownKind::NewVolumeSize, cx);
+                    });
+                })
+                .child(div().truncate().child(volume_label.clone()))
+                .child(icon(IconName::ChevronDown, palette.muted, 14.0));
+            self.track_dropdown(DropdownKind::NewVolumeSize, control.into_any_element(), cx)
+        };
+        let volume_block = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(design::field_label(&palette, "分卷大小"))
+            .child(volume_control)
+            .child(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child(if sfx {
+                        "自解压 EXE 只能输出单个文件".to_string()
+                    } else if volume_size_mb > 0 {
+                        "输出为 .001、.002…，最后一卷可能更小".to_string()
+                    } else {
+                        "不分卷；超过所选大小时自动切分".to_string()
+                    }),
+            );
+        let level_and_volume = div()
+            .flex()
+            .gap(px(16.0))
+            .child(div().flex_1().min_w_0().child(level_block))
+            .child(div().w(px(220.0)).flex_none().child(volume_block));
 
         let mut password_column = div()
             .flex()
@@ -3488,6 +3561,7 @@ impl MainView {
                         draft.sfx = !draft.sfx;
                         if draft.sfx {
                             draft.format = ArchiveFormat::Zip;
+                            draft.volume_size_mb = 0;
                         } else {
                             disabled_format = Some(draft.format);
                         }
@@ -3550,11 +3624,17 @@ impl MainView {
             ));
 
         let ratio = estimate_ratio(if sfx { ArchiveFormat::Zip } else { format });
+        let split_note = if !sfx && volume_size_mb > 0 {
+            format!(" · 按 {} 分卷", volume_label)
+        } else {
+            String::new()
+        };
         let estimate = if source_bytes > 0 {
             format!(
-                "{}（压缩后约占 {:.0}%）",
+                "{}（压缩后约占 {:.0}%）{}",
                 format_size((source_bytes as f64 * ratio) as u64),
-                ratio * 100.0
+                ratio * 100.0,
+                split_note
             )
         } else {
             "选择源文件后显示预估".to_string()
@@ -3776,23 +3856,25 @@ impl MainView {
                 )
             })
             .child(
-                Button::new("new-create")
-                    .label("开始压缩")
-                    .icon(icon(IconName::Play, palette.accent_text, 15.0))
-                    .primary()
-                    .h(px(36.0))
-                    .px(px(16.0))
-                    .text_size(crate::theme::body())
-                    .disabled(!can_create)
-                    .opacity(if can_create { 1.0 } else { 0.45 })
-                    .on_click(cx.listener(|this, _, _, cx| this.start_create(cx))),
+                div().debug_selector(|| "new-create".to_string()).child(
+                    Button::new("new-create")
+                        .label("开始压缩")
+                        .icon(icon(IconName::Play, palette.accent_text, 15.0))
+                        .primary()
+                        .h(px(36.0))
+                        .px(px(16.0))
+                        .text_size(crate::theme::body())
+                        .disabled(!can_create)
+                        .opacity(if can_create { 1.0 } else { 0.45 })
+                        .on_click(cx.listener(|this, _, _, cx| this.start_create(cx))),
+                ),
             );
 
         let mut body = vec![
             src_head.into_any_element(),
             sources_box,
             name_row.into_any_element(),
-            level_block.into_any_element(),
+            level_and_volume.into_any_element(),
             credentials_row.into_any_element(),
             checks.into_any_element(),
             output_row.into_any_element(),

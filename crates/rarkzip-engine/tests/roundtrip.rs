@@ -1761,3 +1761,142 @@ fn nested_rar_wrong_parent_password_prompts() {
     assert_eq!(sink.requests(), 1);
     assert!(out.join("bundle/crypted/.gitignore").exists());
 }
+
+fn pseudo_random_bytes(len: usize, seed: u32) -> Vec<u8> {
+    let mut state = seed;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state & 0xff) as u8
+        })
+        .collect()
+}
+
+#[test]
+fn split_zip_creation_roundtrip() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("payload.bin");
+    let content = pseudo_random_bytes(220_000, 0x1234_5678);
+    write(&source, &content);
+    let archive = temp.path().join("split.zip");
+    let mut create = options(ArchiveFormat::Zip);
+    create.volume_size = Some(64 * 1024);
+
+    let outcome =
+        create_archive(std::slice::from_ref(&source), &archive, &create, &NoopSink).unwrap();
+    assert!(outcome.volumes >= 3);
+    assert_eq!(outcome.dest, temp.path().join("split.zip.001"));
+    assert!(!archive.exists());
+
+    let mut total = 0u64;
+    for index in 1..=outcome.volumes {
+        let volume = temp.path().join(format!("split.zip.{index:03}"));
+        let size = fs::metadata(&volume).unwrap().len();
+        assert!(size <= 64 * 1024);
+        if index < outcome.volumes {
+            assert_eq!(size, 64 * 1024);
+        }
+        total += size;
+    }
+    assert_eq!(total, outcome.compressed_bytes);
+
+    let info = open_archive(&outcome.dest, &OpenOptions::default()).unwrap();
+    assert_eq!(info.format, ArchiveFormat::Zip);
+    assert_eq!(info.file_count(), 1);
+
+    let from_second =
+        open_archive(&temp.path().join("split.zip.002"), &OpenOptions::default()).unwrap();
+    assert_eq!(from_second.file_count(), 1);
+
+    let out = temp.path().join("split-out");
+    extract_archive(
+        &outcome.dest,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(fs::read(out.join("payload.bin")).unwrap(), content);
+}
+
+#[test]
+fn split_7z_creation_with_password_roundtrip() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("payload.bin");
+    let content = pseudo_random_bytes(180_000, 0x8765_4321);
+    write(&source, &content);
+    let archive = temp.path().join("split.7z");
+    let mut create = options(ArchiveFormat::SevenZ);
+    create.password = Some("split-pass".to_string());
+    create.volume_size = Some(64 * 1024);
+    create.test_after = true;
+
+    let outcome =
+        create_archive(std::slice::from_ref(&source), &archive, &create, &NoopSink).unwrap();
+    assert!(outcome.volumes >= 2);
+
+    let info = open_archive(
+        &outcome.dest,
+        &OpenOptions {
+            password: Some("split-pass".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(info.format, ArchiveFormat::SevenZ);
+    assert_eq!(info.file_count(), 1);
+
+    let out = temp.path().join("split-7z-out");
+    extract_archive(
+        &outcome.dest,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("split-pass".to_string()),
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(fs::read(out.join("payload.bin")).unwrap(), content);
+}
+
+#[test]
+fn split_creation_overwrite_removes_stale_volumes() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("payload.bin");
+    write(&source, &pseudo_random_bytes(180_000, 0xABCD_EF01));
+    let archive = temp.path().join("stale.zip");
+
+    let mut many = options(ArchiveFormat::Zip);
+    many.volume_size = Some(64 * 1024);
+    let first = create_archive(std::slice::from_ref(&source), &archive, &many, &NoopSink).unwrap();
+    assert!(first.volumes >= 3);
+
+    let mut fewer = options(ArchiveFormat::Zip);
+    fewer.volume_size = Some(1024 * 1024);
+    let second =
+        create_archive(std::slice::from_ref(&source), &archive, &fewer, &NoopSink).unwrap();
+    assert_eq!(second.volumes, 1);
+    assert!(archive.with_file_name("stale.zip.001").exists());
+    assert!(!archive.with_file_name("stale.zip.002").exists());
+}
+
+#[test]
+fn split_sfx_is_rejected() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("payload.txt");
+    write(&source, b"sfx");
+    let archive = temp.path().join("sfx.exe");
+    let mut create = options(ArchiveFormat::Zip);
+    create.sfx = true;
+    create.volume_size = Some(64 * 1024);
+    let error =
+        create_archive(std::slice::from_ref(&source), &archive, &create, &NoopSink).unwrap_err();
+    assert!(error.to_string().contains("SFX"));
+}

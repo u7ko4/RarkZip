@@ -1242,6 +1242,7 @@ impl QuickView {
             test_after: self.settings.compression.test_after,
             delete_sources,
             sfx: false,
+            volume_size: None,
         };
         self.active_dest = Some(dest.clone());
         let current = if sources.len() == 1 {

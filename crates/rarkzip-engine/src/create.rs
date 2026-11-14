@@ -57,6 +57,8 @@ pub struct CreateOptions {
     pub delete_sources: bool,
     /// 将 ZIP 载荷封装为自解压 EXE。
     pub sfx: bool,
+    /// 分卷大小（字节）；`None` 表示输出单个归档。
+    pub volume_size: Option<u64>,
 }
 
 impl Default for CreateOptions {
@@ -73,6 +75,7 @@ impl Default for CreateOptions {
             test_after: false,
             delete_sources: false,
             sfx: false,
+            volume_size: None,
         }
     }
 }
@@ -86,6 +89,8 @@ pub struct CreateOutcome {
     pub compressed_bytes: u64,
     pub ratio: String,
     pub deleted_sources: usize,
+    /// 输出分卷数量；不分卷时为 1。
+    pub volumes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +109,9 @@ pub fn create_archive(
     options: &CreateOptions,
     sink: &dyn ProgressSink,
 ) -> Result<CreateOutcome> {
+    if let Some(volume_size) = options.volume_size.filter(|size| *size > 0) {
+        return create_split_archive(sources, dest, options, volume_size, sink);
+    }
     if sources.is_empty() {
         return Err(EngineError::Other("没有选择要压缩的文件".to_string()));
     }
@@ -171,6 +179,7 @@ pub fn create_archive(
             compressed_bytes,
             ratio: format_ratio(compressed_bytes, payload.source_bytes),
             deleted_sources,
+            volumes: 1,
         });
     }
 
@@ -262,7 +271,242 @@ pub fn create_archive(
         compressed_bytes,
         ratio: format_ratio(compressed_bytes, total),
         deleted_sources,
+        volumes: 1,
     })
+}
+
+fn create_split_archive(
+    sources: &[PathBuf],
+    dest: &Path,
+    options: &CreateOptions,
+    volume_size: u64,
+    sink: &dyn ProgressSink,
+) -> Result<CreateOutcome> {
+    const MIN_VOLUME_SIZE: u64 = 64 * 1024;
+    if options.sfx {
+        return Err(EngineError::Other("SFX 不支持分卷压缩".to_string()));
+    }
+    if volume_size < MIN_VOLUME_SIZE {
+        return Err(EngineError::Other(format!(
+            "分卷大小至少为 {}",
+            format_size(MIN_VOLUME_SIZE)
+        )));
+    }
+
+    let parent = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(to_extended(parent))?;
+    let file_name = dest
+        .file_name()
+        .ok_or_else(|| EngineError::Other("输出归档路径缺少文件名".to_string()))?;
+
+    let existing = existing_volume_paths(dest)?;
+    if !options.overwrite && (dest.exists() || !existing.is_empty()) {
+        let existing_path = existing
+            .first()
+            .cloned()
+            .unwrap_or_else(|| dest.to_path_buf());
+        return Err(EngineError::AlreadyExists(existing_path));
+    }
+
+    // 先在同一目录的临时子目录中生成完整归档，再按字节切分。临时目录与原
+    // 目标同盘，避免跨盘复制；ISO 卷标等依赖文件名的逻辑仍使用最终名称。
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let temp_dir = parent.join(format!(".rarkzip-split-{}-{}", std::process::id(), stamp));
+    std::fs::create_dir_all(to_extended(&temp_dir))?;
+    let temp_archive = temp_dir.join(file_name);
+
+    let mut inner = options.clone();
+    inner.volume_size = None;
+    inner.sfx = false;
+    inner.overwrite = true;
+    inner.test_after = false;
+    inner.delete_sources = false;
+
+    let payload = match create_archive(sources, &temp_archive, &inner, sink) {
+        Ok(payload) => payload,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(to_extended(&temp_dir));
+            return Err(error);
+        }
+    };
+
+    let total = std::fs::metadata(to_extended(&temp_archive))
+        .map(|metadata| metadata.len())
+        .unwrap_or(payload.compressed_bytes);
+    let volume_count = total.div_ceil(volume_size).max(1) as usize;
+    if volume_count > 9999 {
+        let _ = std::fs::remove_dir_all(to_extended(&temp_dir));
+        return Err(EngineError::Other(
+            "分卷数量超过 9999，请增大分卷大小".to_string(),
+        ));
+    }
+
+    let source_canonical: HashSet<PathBuf> = sources
+        .iter()
+        .filter_map(|source| std::fs::canonicalize(source).ok())
+        .collect();
+    let mut volumes = Vec::with_capacity(volume_count);
+    for index in 1..=volume_count {
+        let target = volume_path(dest, index);
+        if std::fs::canonicalize(&target)
+            .ok()
+            .is_some_and(|path| source_canonical.contains(&path))
+        {
+            let _ = std::fs::remove_dir_all(to_extended(&temp_dir));
+            return Err(EngineError::Other("输出分卷不能与输入文件相同".to_string()));
+        }
+        volumes.push(target);
+    }
+
+    let written = write_volumes(&temp_archive, &volumes, volume_size, total, sink);
+    let _ = std::fs::remove_dir_all(to_extended(&temp_dir));
+    let written = written?;
+
+    // 成功后清理旧的不分卷目标文件和上一次留下的多余分卷。
+    if dest.exists() && options.overwrite {
+        let _ = std::fs::remove_file(to_extended(dest));
+    }
+    for old in existing {
+        if volume_number(&old).is_none_or(|number| number == 0 || number as usize > written.len()) {
+            let _ = std::fs::remove_file(to_extended(&old));
+        }
+    }
+
+    let first = written
+        .first()
+        .cloned()
+        .unwrap_or_else(|| dest.to_path_buf());
+    if options.test_after || options.delete_sources {
+        sink.update(&Progress::new(
+            Phase::Testing,
+            0,
+            1,
+            "校验分卷归档".to_string(),
+        ));
+        verify_archive(&first, options.password.as_deref(), sink)?;
+    }
+    let deleted_sources = if options.delete_sources {
+        delete_sources_after_create(&first, sources, sink)
+    } else {
+        0
+    };
+
+    Ok(CreateOutcome {
+        dest: first,
+        format: options.format,
+        entries: payload.entries,
+        source_bytes: payload.source_bytes,
+        compressed_bytes: total,
+        ratio: format_ratio(total, payload.source_bytes),
+        deleted_sources,
+        volumes: written.len(),
+    })
+}
+
+fn volume_path(dest: &Path, index: usize) -> PathBuf {
+    let parent = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = dest
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "archive".to_string());
+    parent.join(format!("{name}.{index:03}"))
+}
+
+/// 查找目标路径已有的分卷（`name.zip.001`、`name.7z.0001` 等）。
+fn existing_volume_paths(dest: &Path) -> Result<Vec<PathBuf>> {
+    let parent = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let Some(name) = dest
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+    else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{name}.");
+    let mut volumes = Vec::new();
+    let Ok(entries) = std::fs::read_dir(to_extended(parent)) else {
+        return Ok(volumes);
+    };
+    for entry in entries.flatten() {
+        let entry_name = entry.file_name().to_string_lossy().to_string();
+        let Some(suffix) = entry_name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if (2..=4).contains(&suffix.len()) && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            volumes.push(parent.join(entry.file_name()));
+        }
+    }
+    volumes.sort_by_key(|path| volume_number(path));
+    Ok(volumes)
+}
+
+fn volume_number(path: &Path) -> Option<u32> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.rsplit_once('.').map(|(_, digits)| digits))
+        .filter(|digits| (2..=4).contains(&digits.len()))
+        .and_then(|digits| digits.parse::<u32>().ok())
+}
+
+fn write_volumes(
+    source: &Path,
+    volumes: &[PathBuf],
+    volume_size: u64,
+    total: u64,
+    sink: &dyn ProgressSink,
+) -> Result<Vec<PathBuf>> {
+    let mut input = File::open(to_extended(source))?;
+    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut done = 0u64;
+    let mut written = Vec::with_capacity(volumes.len());
+    let result = (|| -> Result<()> {
+        for (index, target) in volumes.iter().enumerate() {
+            check_cancelled(sink)?;
+            let mut output = BufWriter::new(File::create(to_extended(target))?);
+            written.push(target.clone());
+            let mut remaining = volume_size.min(total.saturating_sub(done));
+            while remaining > 0 {
+                check_cancelled(sink)?;
+                let want = remaining.min(buffer.len() as u64) as usize;
+                let read = input.read(&mut buffer[..want])?;
+                if read == 0 {
+                    return Err(EngineError::DataError(
+                        "临时归档长度与分卷写入不一致".to_string(),
+                    ));
+                }
+                output.write_all(&buffer[..read])?;
+                remaining -= read as u64;
+                done += read as u64;
+                sink.update(&Progress::new(
+                    Phase::Compressing,
+                    done,
+                    total,
+                    format!("写入分卷 {}/{}", index + 1, volumes.len()),
+                ));
+            }
+            output.flush()?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        for path in &written {
+            let _ = std::fs::remove_file(to_extended(path));
+        }
+        return Err(error);
+    }
+    Ok(written)
 }
 
 fn sfx_stub() -> Result<PathBuf> {
@@ -1455,14 +1699,18 @@ fn create_single(
 }
 
 pub fn create_summary(outcome: &CreateOutcome) -> String {
-    format!(
+    let mut summary = format!(
         "{} · {} 个文件 · {} → {} ({})",
         outcome.format.label(),
         outcome.entries,
         format_size(outcome.source_bytes),
         format_size(outcome.compressed_bytes),
         outcome.ratio
-    )
+    );
+    if outcome.volumes > 1 {
+        summary.push_str(&format!(" · {} 卷", outcome.volumes));
+    }
+    summary
 }
 
 fn map_zip(error: zip::result::ZipError) -> EngineError {

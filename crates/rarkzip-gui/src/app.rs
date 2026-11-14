@@ -503,6 +503,8 @@ struct NewArchiveDraft {
     output_dir: Option<PathBuf>,
     zip_algorithm: ZipAlgorithm,
     sfx: bool,
+    /// 分卷大小（MB）；0 表示不分卷。
+    volume_size_mb: u32,
     error: Option<String>,
 }
 
@@ -626,6 +628,8 @@ pub struct MainView {
     feature_window: Option<FeatureWindow>,
     /// 独立窗口内“开始压缩”后的结果状态。
     feature_result: Option<FeatureOutcome>,
+    /// 当前窗口句柄；用于压缩完成后自动关闭独立新建窗口。
+    window_handle: AnyWindowHandle,
 }
 
 #[derive(Debug)]
@@ -885,6 +889,7 @@ impl MainView {
             custom_titlebar,
             feature_window,
             feature_result: None,
+            window_handle: window.window_handle(),
         };
 
         cx.subscribe(&view.search, |this, _, event: &InputEvent, cx| {
@@ -1253,23 +1258,23 @@ impl MainView {
                 }
             },
             JobResult::Create {
-                dest,
-                password,
-                result,
+                password, result, ..
             } => {
                 let standalone = self.feature_window == Some(FeatureWindow::NewArchive);
                 match result {
                     Ok(outcome) => {
                         self.set_task_completed(id, create_detail(&outcome));
                         self.show_toast(
-                            format!("已创建 {}", dest.display()),
+                            format!("已创建 {}", outcome.dest.display()),
                             ToastKind::Success,
                             cx,
                         );
                         if standalone {
-                            self.feature_result = Some(FeatureOutcome::Created(dest));
+                            // 独立新建窗口：压缩完成后直接关闭，不再停留在结果页。
+                            self.feature_result = Some(FeatureOutcome::Created(outcome.dest));
+                            self.close_after_create(cx);
                         } else {
-                            self.open_path_with_password(dest, password, cx);
+                            self.open_path_with_password(outcome.dest, password, cx);
                         }
                     }
                     Err(EngineError::Cancelled) => {
@@ -2024,6 +2029,13 @@ impl MainView {
         }
     }
 
+    /// 压缩任务完成后关闭独立新建窗口（任务回调中没有 `&mut Window`）。
+    fn close_after_create(&mut self, cx: &mut Context<Self>) {
+        let _ = self
+            .window_handle
+            .update(cx, |_, window, _| window.remove_window());
+    }
+
     /// 保存设置前合并磁盘上的窗口尺寸，避免主窗口旧副本覆盖其他窗口刚保存的尺寸。
     pub(crate) fn save_settings(&mut self) {
         let latest = Settings::load();
@@ -2353,13 +2365,17 @@ fn short_hash(hash: &str) -> String {
 }
 
 fn create_detail(outcome: &CreateOutcome) -> String {
-    format!(
+    let mut detail = format!(
         "{} 个文件 · {} → {} ({})",
         outcome.entries,
         format_size(outcome.source_bytes),
         format_size(outcome.compressed_bytes),
         outcome.ratio
-    )
+    );
+    if outcome.volumes > 1 {
+        detail.push_str(&format!(" · {} 卷", outcome.volumes));
+    }
+    detail
 }
 
 impl Render for MainView {
@@ -3113,5 +3129,134 @@ mod ui_tests {
             Some("book-pass".to_string()),
             "选择密码后没有把密码送回任务线程"
         );
+    }
+}
+
+#[cfg(test)]
+mod new_archive_ui_tests {
+    use std::time::{Duration, Instant};
+
+    use gpui_kit::{point, AppContext, Modifiers, TestAppContext, VisualTestContext};
+
+    use super::{FeatureWindow, MainView};
+
+    struct LocalAppDataGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl LocalAppDataGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for LocalAppDataGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+        }
+    }
+
+    fn pump(visual: &mut VisualTestContext) {
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[gpui_kit::test]
+    fn new_archive_volume_size_dropdown_updates_draft(cx: &mut TestAppContext) {
+        let _serial = crate::UI_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let _env = LocalAppDataGuard::set(temp.path());
+        cx.update(gpui_kit::init);
+
+        let source = temp.path().join("payload.txt");
+        std::fs::write(&source, b"payload").unwrap();
+        let (view, visual) = cx.add_window_view(|window, cx| {
+            MainView::new_feature(
+                window,
+                cx,
+                FeatureWindow::NewArchive,
+                vec![source.clone()],
+                Some(temp.path().to_path_buf()),
+            )
+        });
+        pump(visual);
+
+        visual.update(|window, app| {
+            view.update(app, |view, cx| {
+                view.new_name.update(cx, |state, cx| {
+                    state.set_value("split.zip", window, cx);
+                });
+            });
+        });
+        pump(visual);
+
+        let control = visual
+            .debug_bounds("new-volume-size")
+            .expect("分卷大小控件未渲染");
+        visual.simulate_click(
+            point(control.center().x, control.center().y),
+            Modifiers::default(),
+        );
+        pump(visual);
+
+        // 下拉预设索引 1 = 10 MB。
+        let option = visual
+            .debug_bounds("dropdown-new-volume-size-1")
+            .expect("分卷大小下拉选项未渲染");
+        visual.simulate_click(
+            point(option.center().x, option.center().y),
+            Modifiers::default(),
+        );
+        pump(visual);
+
+        assert_eq!(
+            visual.read_entity(&view, |view, _| view
+                .new_draft
+                .as_ref()
+                .map(|draft| draft.volume_size_mb)),
+            Some(10),
+            "选择分卷大小后草稿未更新"
+        );
+
+        let create = visual
+            .debug_bounds("new-create")
+            .expect("开始压缩按钮未渲染");
+        visual.simulate_click(
+            point(create.center().x, create.center().y),
+            Modifiers::default(),
+        );
+
+        // 开始压缩后应生成 split.zip.001，而不是单个 split.zip。
+        let first_volume = temp.path().join("split.zip.001");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !first_volume.exists() {
+            assert!(Instant::now() < deadline, "分卷压缩输出超时");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(first_volume.is_file());
+        assert!(std::fs::metadata(&first_volume).unwrap().len() > 0);
+        assert!(!temp.path().join("split.zip").exists());
+
+        // 独立新建窗口应在压缩完成后自动关闭。
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !visual.cx.windows().is_empty() {
+            visual
+                .cx
+                .executor()
+                .advance_clock(Duration::from_millis(100));
+            visual.cx.run_until_parked();
+            assert!(Instant::now() < deadline, "压缩完成后新建窗口未自动关闭");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
