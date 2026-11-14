@@ -349,6 +349,8 @@ enum PendingAction {
 }
 
 #[derive(Debug, Clone)]
+// 弹窗由 UI 事件逐个创建，体积差异不影响热路径，避免为少量枚举值引入 Box。
+#[allow(clippy::large_enum_variant)]
 enum Modal {
     Password {
         archive: PathBuf,
