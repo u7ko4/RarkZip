@@ -833,6 +833,10 @@ impl MainView {
                 cx.notify();
                 return;
             }
+            Some(FeatureWindow::Crypt) => {
+                self.handle_crypt_drop(paths, window, cx);
+                return;
+            }
             Some(FeatureWindow::PasswordRecovery) => {
                 if let Some(path) = paths.iter().find(|path| path.is_file()) {
                     self.recovery_path = Some(path.clone());
@@ -1572,6 +1576,13 @@ impl MainView {
     // ------------------------------------------------------------------
     // Hash
     // ------------------------------------------------------------------
+    pub(super) fn open_crypt_tool(&mut self, cx: &mut Context<Self>) {
+        if self.feature_window == Some(FeatureWindow::Crypt) {
+            return;
+        }
+        self.open_feature_window(FeatureWindow::Crypt, Vec::new(), None, cx);
+    }
+
     pub(super) fn open_hash_modal(&mut self, cx: &mut Context<Self>) {
         if self.feature_window == Some(FeatureWindow::Hash) {
             self.init_hash(cx);

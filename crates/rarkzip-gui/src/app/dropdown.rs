@@ -1,5 +1,6 @@
 use crate::app::impls::ui::level_label;
 use crate::app::*;
+use rarkzip_crypt::text::TextEncoding;
 
 /// 所有自定义 select 控件共用的下拉类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,6 +15,8 @@ pub(crate) enum DropdownKind {
     NewFormat,
     NewZipAlgorithm,
     NewVolumeSize,
+    CryptAlgorithm,
+    CryptEncoding,
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +236,32 @@ impl MainView {
                     .map(|mb| DropdownOption::new(volume_size_label(*mb), *mb == current))
                     .collect()
             }
+            DropdownKind::CryptAlgorithm => {
+                let current = self
+                    .crypt_state
+                    .as_ref()
+                    .map(|state| state.algorithm)
+                    .unwrap_or(rarkzip_crypt::Algorithm::Aes256);
+                rarkzip_crypt::Algorithm::UI
+                    .iter()
+                    .map(|algorithm| DropdownOption::new(algorithm.label(), *algorithm == current))
+                    .collect()
+            }
+            DropdownKind::CryptEncoding => {
+                let current = self
+                    .crypt_state
+                    .as_ref()
+                    .map(|state| state.encoding)
+                    .unwrap_or(TextEncoding::Base64);
+                [
+                    TextEncoding::Base64,
+                    TextEncoding::Base32,
+                    TextEncoding::Base10,
+                ]
+                .iter()
+                .map(|encoding| DropdownOption::new(encoding.label(), *encoding == current))
+                .collect()
+            }
         }
     }
 
@@ -331,6 +360,35 @@ impl MainView {
                         draft.volume_size_mb = mb;
                         draft.error = None;
                     }
+                }
+            }
+            DropdownKind::CryptAlgorithm => {
+                if let Some(algorithm) = rarkzip_crypt::Algorithm::UI.get(index).copied() {
+                    if let Some(state) = &mut self.crypt_state {
+                        state.algorithm = algorithm;
+                    }
+                    self.settings.crypt.algorithm = algorithm.code();
+                    self.save_settings();
+                }
+            }
+            DropdownKind::CryptEncoding => {
+                if let Some(encoding) = [
+                    TextEncoding::Base64,
+                    TextEncoding::Base32,
+                    TextEncoding::Base10,
+                ]
+                .get(index)
+                .copied()
+                {
+                    if let Some(state) = &mut self.crypt_state {
+                        state.encoding = encoding;
+                    }
+                    self.settings.crypt.text_encoding = match encoding {
+                        TextEncoding::Base64 => 0,
+                        TextEncoding::Base32 => 1,
+                        TextEncoding::Base10 => 2,
+                    };
+                    self.save_settings();
                 }
             }
         }
@@ -499,6 +557,8 @@ impl DropdownKind {
             Self::NewFormat => "new-format",
             Self::NewZipAlgorithm => "new-zip-algorithm",
             Self::NewVolumeSize => "new-volume-size",
+            Self::CryptAlgorithm => "crypt-algorithm",
+            Self::CryptEncoding => "crypt-encoding",
         }
     }
 }

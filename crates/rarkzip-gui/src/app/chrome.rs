@@ -316,7 +316,7 @@ impl MainView {
                             .text_size(crate::theme::font_px(crate::theme::TITLEBAR_FONT_SIZE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
-                            .child(feature.title()),
+                            .child(feature.title_for(self.language)),
                     ),
             )
             .child(

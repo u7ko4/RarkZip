@@ -30,6 +30,7 @@ use crate::theme::{self, Palette, Skin, ThemeMode};
 
 mod chrome;
 mod context_menu;
+mod crypt_view;
 mod dropdown;
 mod main_view;
 mod menu;
@@ -46,6 +47,7 @@ enum Page {
     PasswordManager,
     PasswordRecovery,
     Hash,
+    Crypt,
 }
 
 /// 应用主菜单中的二级子菜单。
@@ -61,6 +63,7 @@ pub(crate) enum FeatureWindow {
     NewArchive,
     PasswordRecovery,
     Hash,
+    Crypt,
 }
 
 impl FeatureWindow {
@@ -69,6 +72,14 @@ impl FeatureWindow {
             Self::NewArchive => "新建压缩文件",
             Self::PasswordRecovery => "密码恢复",
             Self::Hash => "文件哈希",
+            Self::Crypt => "文件与文本加密",
+        }
+    }
+
+    pub(crate) fn title_for(self, language: Language) -> &'static str {
+        match self {
+            Self::Crypt => crate::i18n::tr(language, "文件与文本加密"),
+            _ => self.title(),
         }
     }
 
@@ -77,6 +88,7 @@ impl FeatureWindow {
             Self::NewArchive => IconName::FileText,
             Self::PasswordRecovery => IconName::Key,
             Self::Hash => IconName::Hash,
+            Self::Crypt => IconName::LockKeyhole,
         }
     }
 
@@ -85,6 +97,7 @@ impl FeatureWindow {
             Self::NewArchive => Page::NewArchive,
             Self::PasswordRecovery => Page::PasswordRecovery,
             Self::Hash => Page::Hash,
+            Self::Crypt => Page::Crypt,
         }
     }
 
@@ -93,6 +106,7 @@ impl FeatureWindow {
             Self::NewArchive => (980.0, 580.0),
             Self::PasswordRecovery => (720.0, 620.0),
             Self::Hash => (980.0, 480.0),
+            Self::Crypt => (1120.0, 760.0),
         }
     }
 
@@ -102,6 +116,7 @@ impl FeatureWindow {
             Self::NewArchive => "new_archive",
             Self::PasswordRecovery => "recovery",
             Self::Hash => "hash",
+            Self::Crypt => "crypt",
         }
     }
 }
@@ -617,6 +632,7 @@ pub struct MainView {
     hash_batch_run_id: u64,
     hash_batch_sender: Sender<HashBatchEvent>,
     hash_batch_receiver: Receiver<HashBatchEvent>,
+    crypt_state: Option<crypt_view::CryptState>,
     preview: PreviewState,
     preview_sender: Sender<PreviewEvent>,
     preview_receiver: Receiver<PreviewEvent>,
@@ -688,6 +704,7 @@ impl MainView {
                     view.start_hash_batch(cx);
                 }
             }
+            FeatureWindow::Crypt => view.init_crypt(window, cx, new_sources),
         }
         view
     }
@@ -879,6 +896,7 @@ impl MainView {
             hash_batch_run_id: 0,
             hash_batch_sender,
             hash_batch_receiver,
+            crypt_state: None,
             preview: PreviewState::default(),
             preview_sender,
             preview_receiver,
@@ -886,7 +904,7 @@ impl MainView {
             open_receiver,
             preview_ready: true,
             last_title: feature_window
-                .map(|feature| feature.title().to_string())
+                .map(|feature| feature.title_for(language).to_string())
                 .unwrap_or_else(|| "RarkZip".to_string()),
             custom_titlebar,
             feature_window,
@@ -947,6 +965,11 @@ impl MainView {
                     view.save_feature_window_state(window, feature);
                     if view.recovery_running {
                         view.recovery_control.cancel();
+                    }
+                    if let Some(state) = &view.crypt_state {
+                        state
+                            .cancel
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                 } else {
                     view.save_window_state(window);
@@ -1015,6 +1038,7 @@ impl MainView {
                 "password-manager" => view.open_password_manager(window, cx),
                 "recovery" => view.open_password_recovery(window, cx),
                 "hash-batch" => view.open_hash_batch(cx),
+                "crypt" => view.open_crypt_tool(cx),
                 "columns" => view.open_columns(cx),
                 "toolbar" => view.open_toolbar_settings(cx),
                 _ => {}
@@ -1060,6 +1084,9 @@ impl MainView {
         }
         while let Ok(event) = self.hash_batch_receiver.try_recv() {
             self.handle_hash_batch_event(event, cx);
+            changed = true;
+        }
+        if self.drain_crypt_events(cx) {
             changed = true;
         }
         while let Ok(event) = self.open_receiver.try_recv() {
@@ -2000,7 +2027,7 @@ impl MainView {
             window_bounds: Some(bounds),
             window_background: WindowBackgroundAppearance::Opaque,
             titlebar: Some(TitlebarOptions {
-                title: Some(feature.title().into()),
+                title: Some(feature.title_for(self.language).into()),
                 appears_transparent: custom_titlebar,
                 traffic_light_position: None,
             }),
@@ -2126,7 +2153,7 @@ impl MainView {
 
     fn window_title(&self) -> String {
         if let Some(feature) = self.feature_window {
-            return feature.title().to_string();
+            return feature.title_for(self.language).to_string();
         }
         match &self.archive {
             Some(archive) => format!(
@@ -2399,6 +2426,7 @@ impl Render for MainView {
             Page::PasswordManager => self.render_password_manager_page(window, cx),
             Page::PasswordRecovery => self.render_password_recovery_page(cx),
             Page::Hash => self.render_hash_page(window, cx),
+            Page::Crypt => self.render_crypt_page(window, cx),
         };
         // 任务中心、设置以及各功能页使用整页布局，不再显示归档地址栏与搜索框；
         // 首页（未打开归档）也不再显示地址栏，直接进入卡片式开始页。
@@ -2611,6 +2639,7 @@ impl MainView {
             }
             FeatureWindow::PasswordRecovery => self.render_password_recovery_page(cx),
             FeatureWindow::Hash => self.render_hash_page(window, cx),
+            FeatureWindow::Crypt => self.render_crypt_page(window, cx),
         };
         // 独立窗口同样需要下拉层、模态框、Toast 与拖放处理，
         // 否则格式/算法下拉等控件会表现为“点了没反应”。
@@ -3260,5 +3289,80 @@ mod new_archive_ui_tests {
             assert!(Instant::now() < deadline, "压缩完成后新建窗口未自动关闭");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+}
+
+#[cfg(test)]
+mod crypt_ui_tests {
+    use gpui_kit::{point, Modifiers, TestAppContext, VisualTestContext};
+
+    use super::{FeatureWindow, MainView};
+
+    struct LocalAppDataGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl LocalAppDataGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for LocalAppDataGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+        }
+    }
+
+    fn pump(visual: &mut VisualTestContext) {
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[gpui_kit::test]
+    fn crypt_window_renders_and_switches_tabs(cx: &mut TestAppContext) {
+        let _serial = crate::UI_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let _env = LocalAppDataGuard::set(temp.path());
+        cx.update(gpui_kit::init);
+
+        let (_view, visual) = cx.add_window_view(|window, cx| {
+            MainView::new_feature(window, cx, FeatureWindow::Crypt, Vec::new(), None)
+        });
+        pump(visual);
+        assert!(
+            visual.debug_bounds("crypt-root").is_some(),
+            "加密窗口未渲染"
+        );
+
+        let tab = visual
+            .debug_bounds("crypt-tab-text")
+            .expect("文本页签未渲染");
+        visual.simulate_click(point(tab.center().x, tab.center().y), Modifiers::default());
+        pump(visual);
+        assert!(
+            visual.debug_bounds("crypt-encrypt-text").is_some(),
+            "文本页未渲染加密按钮"
+        );
+
+        let tab = visual
+            .debug_bounds("crypt-tab-stego")
+            .expect("隐写页签未渲染");
+        visual.simulate_click(point(tab.center().x, tab.center().y), Modifiers::default());
+        pump(visual);
+        assert!(
+            visual.debug_bounds("crypt-stego-embed").is_some(),
+            "隐写页未渲染制作按钮"
+        );
     }
 }

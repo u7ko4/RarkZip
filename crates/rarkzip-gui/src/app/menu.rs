@@ -262,6 +262,15 @@ impl MainView {
                     cx,
                 ))
                 .child(self.menu_item(
+                    "submenu-crypt",
+                    IconName::LockKeyhole,
+                    "文件与文本加密…",
+                    None,
+                    true,
+                    |this, _, cx| this.open_crypt_tool(cx),
+                    cx,
+                ))
+                .child(self.menu_item(
                     "submenu-scan",
                     IconName::ScanSearch,
                     "扫描恶意软件",
