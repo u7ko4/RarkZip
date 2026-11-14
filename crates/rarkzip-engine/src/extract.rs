@@ -152,11 +152,12 @@ pub fn extract_archive(
 ///
 /// 1. 已确认的密码（首层密码本命中的密码 / 父包密码）；
 /// 2. 空密码；
-/// 3. 仅对能快速校验密码的格式，按密码本顺序尝试；
+/// 3. 首层仅对能快速校验密码的格式按密码本顺序尝试；嵌套层对所有格式
+///    尝试密码本，因为嵌套密码通常复用首层密码；
 /// 4. 通过 `ProgressSink::request_password` 请求用户输入。
 ///
-/// RAR 等格式逐个试密需要实际解压条目，首层和嵌套层都不在后台长时间
-/// 试错：首层直接弹窗，嵌套层先用父包密码，失败后弹窗。
+/// RAR 等格式逐个试密需要实际解压条目，因此首层不在后台长时间试错，
+/// 直接弹窗；嵌套层在父包密码和密码本都失败后再弹窗。
 fn open_with_password_resolution(
     path: &Path,
     options: &ExtractOptions,
@@ -202,8 +203,9 @@ fn open_with_password_resolution(
         Err(error) => return Err(error),
     }
 
-    // 3. 只有可快速校验的格式才自动尝试密码本。
-    if crate::archive::supports_quick_password_test(path) {
+    // 3. 首层只有可快速校验的格式才自动尝试密码本；嵌套层不跳过，
+    //    因为嵌套包的密码通常与首层相同，RAR/7z 也应直接尝试。
+    if nested || crate::archive::supports_quick_password_test(path) {
         let mut candidates: Vec<String> = Vec::new();
         candidates.push(String::new());
         for password in &options.passwords {

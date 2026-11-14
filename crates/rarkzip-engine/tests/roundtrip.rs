@@ -1900,3 +1900,110 @@ fn split_sfx_is_rejected() {
         create_archive(std::slice::from_ref(&source), &archive, &create, &NoopSink).unwrap_err();
     assert!(error.to_string().contains("SFX"));
 }
+
+#[test]
+fn nested_rar_uses_password_book_without_quick_test() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/crypted.rar");
+    let temp = TempDir::new().unwrap();
+    let bundle = temp.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    fs::copy(&fixture, bundle.join("crypted.rar")).unwrap();
+    write(&bundle.join("readme.txt"), b"outer");
+    let outer = temp.path().join("outer.zip");
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("nested-rar-book-out");
+    let sink = PasswordSink::new("should-not-be-requested");
+    let result = extract_archive(
+        &outer,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: None,
+            passwords: vec!["wrong-pass".to_string(), "unrar".to_string()],
+            propagate_motw: false,
+            nested_depth: 3,
+            ..Default::default()
+        },
+        &sink,
+    )
+    .unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(sink.requests(), 0, "嵌套 RAR 应直接使用密码本，不应弹窗");
+    assert!(out.join("bundle/crypted/.gitignore").exists());
+}
+
+#[test]
+fn rar_header_encryption_password_check_rejects_wrong_password() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/header_crypted.rar");
+    // 头加密 RAR 的列表接口不会校验密码，试密必须实际解密第一个头。
+    assert!(!test_password(&fixture, "wrong-pass").unwrap());
+    assert!(!test_password(&fixture, "").unwrap());
+    assert!(test_password(&fixture, "unrar").unwrap());
+
+    let temp = TempDir::new().unwrap();
+    let out = temp.path().join("header-rar-out");
+    extract_archive(
+        &fixture,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("unrar".to_string()),
+            propagate_motw: false,
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(out.join("sample.txt")).unwrap(),
+        b"header encrypted rar fixture\n"
+    );
+}
+
+#[test]
+fn nested_header_encrypted_rar_uses_password_book() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/header_crypted.rar");
+    let temp = TempDir::new().unwrap();
+    let bundle = temp.path().join("bundle");
+    std::fs::create_dir_all(&bundle).unwrap();
+    fs::copy(&fixture, bundle.join("header.rar")).unwrap();
+    write(&bundle.join("readme.txt"), b"outer");
+    let outer = temp.path().join("outer.zip");
+    create_archive(
+        std::slice::from_ref(&bundle),
+        &outer,
+        &options(ArchiveFormat::Zip),
+        &NoopSink,
+    )
+    .unwrap();
+
+    let out = temp.path().join("nested-header-rar-out");
+    let sink = PasswordSink::new("should-not-be-requested");
+    let result = extract_archive(
+        &outer,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: None,
+            passwords: vec!["wrong-pass".to_string(), "unrar".to_string()],
+            propagate_motw: false,
+            nested_depth: 3,
+            ..Default::default()
+        },
+        &sink,
+    )
+    .unwrap();
+    assert_eq!(result.nested_archives, 1);
+    assert_eq!(sink.requests(), 0);
+    assert_eq!(
+        fs::read(out.join("bundle/header/sample.txt")).unwrap(),
+        b"header encrypted rar fixture\n"
+    );
+}
