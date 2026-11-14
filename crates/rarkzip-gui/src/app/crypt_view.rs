@@ -265,7 +265,7 @@ impl MainView {
                 }
                 state.progress_done = done;
                 state.progress_total = total;
-                let mut status = crypt_phase_label(phase).to_string();
+                let mut status = crypt_phase_label(phase, self.language).to_string();
                 if let Some(current) = current {
                     status.push_str(" · ");
                     status.push_str(&current);
@@ -2160,8 +2160,8 @@ fn is_image_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn crypt_phase_label(phase: Phase) -> &'static str {
-    match phase {
+fn crypt_phase_label(phase: Phase, language: Language) -> &'static str {
+    let label = match phase {
         Phase::Preparing => "准备",
         Phase::Compressing => "正在压缩",
         Phase::Encrypting => "加密",
@@ -2170,5 +2170,6 @@ fn crypt_phase_label(phase: Phase) -> &'static str {
         Phase::Extracting => "正在解压",
         Phase::Steganography => "隐写",
         Phase::Finished => "完成",
-    }
+    };
+    crate::i18n::tr(language, label)
 }

@@ -130,7 +130,7 @@ impl MainView {
                         });
                         this.rebuild_rows();
                         this.page = Page::Main;
-                        this.show_toast("已关闭压缩包", ToastKind::Info, cx);
+                        this.show_toast(this.localized("已关闭压缩包"), ToastKind::Info, cx);
                     }
                 },
                 cx,
@@ -334,7 +334,7 @@ impl MainView {
                 |this, _, cx| {
                     this.settings.clear_recent();
                     this.save_settings();
-                    this.show_toast("已清除最近打开记录", ToastKind::Info, cx);
+                    this.show_toast(this.localized("已清除最近打开记录"), ToastKind::Info, cx);
                 },
                 cx,
             ));

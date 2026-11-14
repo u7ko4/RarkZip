@@ -147,19 +147,15 @@ impl Skin {
     }
 
     pub fn label(self, language: crate::i18n::Language) -> &'static str {
-        let (zh, en) = match self {
-            Self::Blue => ("默认蓝", "Blue"),
-            Self::Emerald => ("翡翠绿", "Emerald"),
-            Self::Violet => ("紫罗兰", "Violet"),
-            Self::Amber => ("琥珀", "Amber"),
-            Self::Rose => ("玫瑰", "Rose"),
-            Self::Slate => ("石板灰", "Slate"),
+        let zh = match self {
+            Self::Blue => "默认蓝",
+            Self::Emerald => "翡翠绿",
+            Self::Violet => "紫罗兰",
+            Self::Amber => "琥珀",
+            Self::Rose => "玫瑰",
+            Self::Slate => "石板灰",
         };
-        if language == crate::i18n::Language::En {
-            en
-        } else {
-            zh
-        }
+        crate::i18n::tr(language, zh)
     }
 }
 

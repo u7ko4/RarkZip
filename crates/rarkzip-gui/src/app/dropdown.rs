@@ -145,8 +145,10 @@ impl MainView {
                 CODEPAGES
                     .iter()
                     .map(|codepage| {
-                        let option =
-                            DropdownOption::new(codepage.label().to_string(), *codepage == current);
+                        let option = DropdownOption::new(
+                            crate::i18n::tr(self.language, codepage.label()).to_string(),
+                            *codepage == current,
+                        );
                         if *codepage == Codepage::Auto {
                             option.separator_before()
                         } else {
@@ -160,7 +162,7 @@ impl MainView {
                 (0..=9)
                     .map(|level| {
                         DropdownOption::new(
-                            format!("{level} · {}", level_label(level)),
+                            format!("{level} · {}", tr(self.language, level_label(level))),
                             level == current,
                         )
                     })
@@ -207,9 +209,10 @@ impl MainView {
                         NewFormatChoice::Format(format) => {
                             DropdownOption::new(*label, !current_sfx && *format == current_format)
                         }
-                        NewFormatChoice::Sfx => {
-                            DropdownOption::new(format!("{label}（自解压）"), current_sfx)
-                        }
+                        NewFormatChoice::Sfx => DropdownOption::new(
+                            crate::i18n::tr_fmt(self.language, "{}（自解压）", &[label]),
+                            current_sfx,
+                        ),
                     })
                     .collect()
             }
@@ -234,7 +237,16 @@ impl MainView {
                     .unwrap_or(0);
                 VOLUME_SIZES
                     .iter()
-                    .map(|mb| DropdownOption::new(volume_size_label(*mb), *mb == current))
+                    .map(|mb| {
+                        DropdownOption::new(
+                            if *mb == 0 {
+                                crate::i18n::tr(self.language, "不分卷").to_string()
+                            } else {
+                                volume_size_label(*mb)
+                            },
+                            *mb == current,
+                        )
+                    })
                     .collect()
             }
             DropdownKind::CryptAlgorithm => {
@@ -310,7 +322,11 @@ impl MainView {
                         self.reload_archive(cx);
                     }
                     self.show_toast(
-                        format!("文本编码：{}", codepage.label()),
+                        crate::i18n::tr_fmt(
+                            self.language,
+                            "文本编码：{}",
+                            &[&crate::i18n::tr(self.language, codepage.label())],
+                        ),
                         ToastKind::Info,
                         cx,
                     );

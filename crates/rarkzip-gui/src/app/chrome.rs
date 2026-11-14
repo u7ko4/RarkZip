@@ -19,6 +19,7 @@ impl MainView {
         let toolbar_height = self.settings.view.toolbar_height.clamp(40.0, 64.0);
 
         let icon_button = |id: &'static str, name: IconName, tip: &'static str| {
+            let tip = self.localized(tip);
             Button::new(id)
                 .child(icon(name, palette.text, toolbar_icon_size))
                 .ghost()
@@ -42,8 +43,8 @@ impl MainView {
                     .hover(palette.accent_soft)
                     .active(palette.accent_soft),
             )
-            .tooltip("解压 (Ctrl+E)")
-            .accessibility_label("解压 (Ctrl+E)");
+            .tooltip(self.localized("解压 (Ctrl+E)"))
+            .accessibility_label(self.localized("解压 (Ctrl+E)"));
         let extract = if has_archive {
             extract
                 .on_click(cx.listener(|this, _, window, cx| this.start_extract_smart(window, cx)))
@@ -382,7 +383,7 @@ impl MainView {
                 .path
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| "归档".to_string());
+                .unwrap_or_else(|| self.localized("归档").to_string());
             crumb = crumb.child(
                 div()
                     .id("crumb-root")
@@ -437,7 +438,7 @@ impl MainView {
                     .small()
                     .w(px(crate::components::ICON_BUTTON_SIZE))
                     .h(px(crate::components::CONTROL_HEIGHT))
-                    .tooltip("上级目录 (Backspace)")
+                    .tooltip(self.localized("上级目录 (Backspace)"))
                     .disabled(current.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_up(cx))),
             )

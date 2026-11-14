@@ -352,6 +352,7 @@ impl MainView {
         F: Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     {
         let palette = self.palette;
+        let label = self.localized(label);
         let action = Rc::new(action);
         div()
             .id(id)

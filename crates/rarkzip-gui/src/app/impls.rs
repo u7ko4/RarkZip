@@ -184,13 +184,17 @@ impl MainView {
             return;
         }
         let Some(path) = self.recovery_path.clone() else {
-            self.show_toast("请先选择要恢复的压缩包", ToastKind::Error, cx);
+            self.show_toast(
+                self.localized("请先选择要恢复的压缩包"),
+                ToastKind::Error,
+                cx,
+            );
             return;
         };
         let mode = match self.recovery_mode {
             RecoveryUiMode::Dictionary => {
                 if self.recovery_dictionary.is_empty() {
-                    self.show_toast("请先导入字典文件", ToastKind::Error, cx);
+                    self.show_toast(self.localized("请先导入字典文件"), ToastKind::Error, cx);
                     return;
                 }
                 RecoveryMode::Dictionary(self.recovery_dictionary.clone())
@@ -268,15 +272,22 @@ impl MainView {
                             self.recovery_result = Some(password.clone());
                             self.recovery_error = None;
                             self.show_toast(
-                                format!("已找到密码并记入密码本：{password}"),
+                                crate::i18n::tr_fmt(
+                                    self.language,
+                                    "已找到密码并记入密码本：{}",
+                                    &[&password],
+                                ),
                                 ToastKind::Success,
                                 cx,
                             );
                         } else if outcome.cancelled {
-                            self.recovery_error = Some("已取消".to_string());
+                            self.recovery_error = Some(self.localized("已取消").to_string());
                         } else {
-                            self.recovery_error =
-                                Some(format!("未找到匹配密码（已尝试 {} 次）", outcome.attempts));
+                            self.recovery_error = Some(crate::i18n::tr_fmt(
+                                self.language,
+                                "未找到匹配密码（已尝试 {} 次）",
+                                &[&outcome.attempts],
+                            ));
                         }
                     }
                     Err(error) => {
@@ -290,46 +301,58 @@ impl MainView {
 
     pub(super) fn scan_current_archive(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.archive.as_ref().map(|archive| archive.path.clone()) else {
-            self.show_toast("请先打开压缩包", ToastKind::Info, cx);
+            self.show_toast(self.localized("请先打开压缩包"), ToastKind::Info, cx);
             return;
         };
         let buffer = self.settings.security.scan_buffer_kb as u64 * 1024;
         match rarkzip_engine::scan_file(&path, buffer) {
             Ok(rarkzip_engine::AmsiVerdict::Detected) => self.show_toast(
-                "AMSI 检测到恶意内容，请勿解压或运行该文件",
+                self.localized("AMSI 检测到恶意内容，请勿解压或运行该文件"),
                 ToastKind::Error,
                 cx,
             ),
             Ok(rarkzip_engine::AmsiVerdict::Clean) => self.show_toast(
-                format!(
+                crate::i18n::tr_fmt(
+                    self.language,
                     "AMSI 扫描完成：未检测到威胁（缓冲区 {} KB）",
-                    self.settings.security.scan_buffer_kb
+                    &[&self.settings.security.scan_buffer_kb],
                 ),
                 ToastKind::Success,
                 cx,
             ),
-            Ok(rarkzip_engine::AmsiVerdict::Unavailable(error)) => {
-                self.show_toast(format!("AMSI 不可用：{error}"), ToastKind::Info, cx)
-            }
-            Err(error) => self.show_toast(format!("扫描失败：{error}"), ToastKind::Error, cx),
+            Ok(rarkzip_engine::AmsiVerdict::Unavailable(error)) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "AMSI 不可用：{}", &[&error]),
+                ToastKind::Info,
+                cx,
+            ),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "扫描失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
     pub(super) fn repair_zip_dialog(&mut self, cx: &mut Context<Self>) {
+        let zip_filter = self.localized("ZIP 归档");
         let source = self
             .archive
             .as_ref()
             .filter(|archive| archive.info.format.is_zip())
             .map(|archive| archive.path.clone())
             .or_else(|| {
-                crate::components::file_dialog(|| {
+                crate::components::file_dialog(move || {
                     rfd::FileDialog::new()
-                        .add_filter("ZIP 归档", &["zip", "zipx"])
+                        .add_filter(zip_filter, &["zip", "zipx"])
                         .pick_file()
                 })
             });
         let Some(source) = source else {
-            self.show_toast("请选择要修复的 ZIP 文件", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("请选择要修复的 ZIP 文件"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         };
         let stem = source
@@ -343,7 +366,7 @@ impl MainView {
             .unwrap_or_else(|| "repaired.zip".to_string());
         let Some(dest) = crate::components::file_dialog(move || {
             rfd::FileDialog::new()
-                .add_filter("ZIP 归档", &["zip"])
+                .add_filter(zip_filter, &["zip"])
                 .set_file_name(suggested_name)
                 .save_file()
         }) else {
@@ -351,17 +374,24 @@ impl MainView {
         };
         match rarkzip_engine::repair_zip(&source, &dest, &rarkzip_engine::NoopSink) {
             Ok(report) => self.show_toast(
-                format!(
+                crate::i18n::tr_fmt(
+                    self.language,
                     "修复完成：恢复 {}/{} 项 · 跳过 {} 项 → {}",
-                    report.recovered,
-                    report.entries,
-                    report.skipped,
-                    dest.display()
+                    &[
+                        &report.recovered,
+                        &report.entries,
+                        &report.skipped,
+                        &dest.display(),
+                    ],
                 ),
                 ToastKind::Success,
                 cx,
             ),
-            Err(error) => self.show_toast(format!("修复失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "修复失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -370,7 +400,11 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持向 ZIP 归档添加文件", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持向 ZIP 归档添加文件"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
         let path = archive.path.clone();
@@ -385,13 +419,17 @@ impl MainView {
         match rarkzip_engine::add_zip_entries(&path, &files, password.as_deref()) {
             Ok(report) => {
                 self.show_toast(
-                    format!("已添加 {} 个条目", report.added),
+                    crate::i18n::tr_fmt(self.language, "已添加 {} 个条目", &[&report.added]),
                     ToastKind::Success,
                     cx,
                 );
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("添加失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "添加失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -400,12 +438,16 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持删除 ZIP 条目", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持删除 ZIP 条目"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
         let selected = self.selected_indices();
         if selected.is_empty() {
-            self.show_toast("请先选择一个条目", ToastKind::Info, cx);
+            self.show_toast(self.localized("请先选择一个条目"), ToastKind::Info, cx);
             return;
         }
         let mut delete = std::collections::HashSet::new();
@@ -430,13 +472,18 @@ impl MainView {
                 .find(selected[0])
                 .map(|entry| entry.path.clone())
                 .unwrap_or_default();
-            format!("确定从压缩包删除「{name}」吗？")
+            crate::i18n::tr_fmt(self.language, "确定从压缩包删除「{}」吗？", &[&name])
         } else {
-            format!("确定从压缩包删除选中的 {} 个条目吗？", selected.len())
+            crate::i18n::tr_fmt(
+                self.language,
+                "确定从压缩包删除选中的 {} 个条目吗？",
+                &[&selected.len()],
+            )
         };
+        let delete_title = self.localized("删除条目");
         let result = crate::components::file_dialog(move || {
             rfd::MessageDialog::new()
-                .set_title("删除条目")
+                .set_title(delete_title)
                 .set_description(description)
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .show()
@@ -457,7 +504,11 @@ impl MainView {
         ) {
             Ok(report) => {
                 self.show_toast(
-                    format!("已删除条目，重写 {} 项", report.written),
+                    crate::i18n::tr_fmt(
+                        self.language,
+                        "已删除条目，重写 {} 项",
+                        &[&report.written],
+                    ),
                     ToastKind::Success,
                     cx,
                 );
@@ -466,7 +517,11 @@ impl MainView {
                 self.archive_menu = None;
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("删除失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "删除失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -499,9 +554,11 @@ impl MainView {
                     self.rebuild_rows();
                 }
             }
-            Err(error) => {
-                self.show_toast(format!("重新读取归档失败：{error}"), ToastKind::Error, cx)
-            }
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "重新读取归档失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -510,11 +567,15 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持重命名 ZIP 条目", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持重命名 ZIP 条目"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
         let Some(selected) = self.selected else {
-            self.show_toast("请先选择一个条目", ToastKind::Info, cx);
+            self.show_toast(self.localized("请先选择一个条目"), ToastKind::Info, cx);
             return;
         };
         let Some(entry) = archive.info.find(selected) else {
@@ -533,7 +594,11 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持编辑 ZIP 注释", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持编辑 ZIP 注释"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
         let comment = archive.info.comment.clone().unwrap_or_default();
@@ -549,7 +614,11 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持在 ZIP 中新建文件夹", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持在 ZIP 中新建文件夹"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
         self.rename_input.update(cx, |state, cx| {
@@ -570,7 +639,7 @@ impl MainView {
         };
         let name = self.rename_input.read(cx).value().to_string();
         if name.trim().is_empty() {
-            self.show_toast("文件夹名称不能为空", ToastKind::Error, cx);
+            self.show_toast(self.localized("文件夹名称不能为空"), ToastKind::Error, cx);
             return;
         }
         let path = if parent.is_empty() {
@@ -584,10 +653,14 @@ impl MainView {
             Ok(_) => {
                 self.modal = None;
                 self.selected = None;
-                self.show_toast("文件夹已创建", ToastKind::Success, cx);
+                self.show_toast(self.localized("文件夹已创建"), ToastKind::Success, cx);
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("新建文件夹失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "新建文件夹失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -597,12 +670,12 @@ impl MainView {
         };
         let selected = self.selected_indices();
         if selected.is_empty() {
-            self.show_toast("请先选择要复制的条目", ToastKind::Info, cx);
+            self.show_toast(self.localized("请先选择要复制的条目"), ToastKind::Info, cx);
             return;
         }
         if archive.info.encrypted && archive.password.is_none() {
             self.show_toast(
-                "当前归档需要密码，请先输入密码后再复制",
+                self.localized("当前归档需要密码，请先输入密码后再复制"),
                 ToastKind::Info,
                 cx,
             );
@@ -635,7 +708,11 @@ impl MainView {
             .join("RarkZip")
             .join(format!("clipboard-{}-{stamp}", std::process::id()));
         if let Err(error) = std::fs::create_dir_all(&dir) {
-            self.show_toast(format!("创建临时目录失败：{error}"), ToastKind::Error, cx);
+            self.show_toast(
+                crate::i18n::tr_fmt(self.language, "创建临时目录失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            );
             return;
         }
         let options = ExtractOptions {
@@ -656,7 +733,11 @@ impl MainView {
         match extract_archive(&archive_path, &options, &rarkzip_engine::NoopSink) {
             Ok(_) => {}
             Err(error) => {
-                self.show_toast(format!("复制前解压失败：{error}"), ToastKind::Error, cx);
+                self.show_toast(
+                    crate::i18n::tr_fmt(self.language, "复制前解压失败：{}", &[&error]),
+                    ToastKind::Error,
+                    cx,
+                );
                 return;
             }
         }
@@ -666,16 +747,24 @@ impl MainView {
             .filter(|path| path.exists())
             .collect();
         if files.is_empty() {
-            self.show_toast("选中条目没有可复制的文件", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("选中条目没有可复制的文件"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
-        match crate::clipboard::set_file_list(&files) {
+        match crate::clipboard::set_file_list(&files, self.language) {
             Ok(()) => self.show_toast(
-                format!("已复制 {} 个条目到剪贴板", files.len()),
+                crate::i18n::tr_fmt(self.language, "已复制 {} 个条目到剪贴板", &[&files.len()]),
                 ToastKind::Success,
                 cx,
             ),
-            Err(error) => self.show_toast(format!("复制失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "复制失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -684,18 +773,26 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持向 ZIP 粘贴条目", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持向 ZIP 粘贴条目"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
-        let files = match crate::clipboard::file_list() {
+        let files = match crate::clipboard::file_list(self.language) {
             Ok(files) => files,
             Err(error) => {
-                self.show_toast(format!("读取剪贴板失败：{error}"), ToastKind::Error, cx);
+                self.show_toast(
+                    crate::i18n::tr_fmt(self.language, "读取剪贴板失败：{}", &[&error]),
+                    ToastKind::Error,
+                    cx,
+                );
                 return;
             }
         };
         if files.is_empty() {
-            self.show_toast("剪贴板中没有文件", ToastKind::Info, cx);
+            self.show_toast(self.localized("剪贴板中没有文件"), ToastKind::Info, cx);
             return;
         }
         let path = archive.path.clone();
@@ -703,13 +800,17 @@ impl MainView {
         match rarkzip_engine::add_zip_entries(&path, &files, password.as_deref()) {
             Ok(report) => {
                 self.show_toast(
-                    format!("已粘贴 {} 个条目", report.added),
+                    crate::i18n::tr_fmt(self.language, "已粘贴 {} 个条目", &[&report.added]),
                     ToastKind::Success,
                     cx,
                 );
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("粘贴失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "粘贴失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -722,7 +823,7 @@ impl MainView {
         };
         let new_name = self.rename_input.read(cx).value().to_string();
         if new_name.trim().is_empty() {
-            self.show_toast("条目路径不能为空", ToastKind::Error, cx);
+            self.show_toast(self.localized("条目路径不能为空"), ToastKind::Error, cx);
             return;
         }
         let path = archive.path.clone();
@@ -741,10 +842,14 @@ impl MainView {
             Ok(_) => {
                 self.modal = None;
                 self.selected = None;
-                self.show_toast("条目已重命名", ToastKind::Success, cx);
+                self.show_toast(self.localized("条目已重命名"), ToastKind::Success, cx);
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("重命名失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "重命名失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -766,10 +871,14 @@ impl MainView {
         ) {
             Ok(_) => {
                 self.modal = None;
-                self.show_toast("注释已保存", ToastKind::Success, cx);
+                self.show_toast(self.localized("注释已保存"), ToastKind::Success, cx);
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("保存注释失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "保存注释失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -808,7 +917,7 @@ impl MainView {
                     });
                 }
                 self.show_toast(
-                    format!("已添加 {} 个拖放源文件", paths.len()),
+                    crate::i18n::tr_fmt(self.language, "已添加 {} 个拖放源文件", &[&paths.len()]),
                     ToastKind::Info,
                     cx,
                 );
@@ -826,7 +935,11 @@ impl MainView {
                 self.hash_selected_row = None;
                 self.hash_context_menu = None;
                 self.show_toast(
-                    format!("已添加 {} 个文件到哈希列表", paths.len()),
+                    format!(
+                        "{} ({})",
+                        crate::i18n::tr(self.language, "已添加到哈希列表"),
+                        paths.len()
+                    ),
                     ToastKind::Info,
                     cx,
                 );
@@ -872,7 +985,7 @@ impl MainView {
                 });
             }
             self.show_toast(
-                format!("已添加 {} 个拖放源文件", paths.len()),
+                crate::i18n::tr_fmt(self.language, "已添加 {} 个拖放源文件", &[&paths.len()]),
                 ToastKind::Info,
                 cx,
             );
@@ -883,7 +996,11 @@ impl MainView {
             return;
         };
         if !archive.info.format.is_zip() {
-            self.show_toast("当前仅支持向 ZIP 归档拖放添加", ToastKind::Info, cx);
+            self.show_toast(
+                self.localized("当前仅支持向 ZIP 归档拖放添加"),
+                ToastKind::Info,
+                cx,
+            );
             return;
         }
         let path = archive.path.clone();
@@ -891,13 +1008,17 @@ impl MainView {
         match rarkzip_engine::add_zip_entries(&path, paths, password.as_deref()) {
             Ok(report) => {
                 self.show_toast(
-                    format!("已添加 {} 个拖放条目", report.added),
+                    crate::i18n::tr_fmt(self.language, "已添加 {} 个拖放条目", &[&report.added]),
                     ToastKind::Success,
                     cx,
                 );
                 self.reload_archive(cx);
             }
-            Err(error) => self.show_toast(format!("拖放添加失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "拖放添加失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -959,7 +1080,11 @@ impl MainView {
             .position(|candidate| *candidate == algorithm)
         {
             if self.hash_batch_algorithms.len() <= 1 {
-                self.show_toast("至少保留一个哈希算法", ToastKind::Info, cx);
+                self.show_toast(
+                    crate::i18n::tr(self.language, "至少保留一个哈希算法"),
+                    ToastKind::Info,
+                    cx,
+                );
                 return;
             }
             self.hash_batch_algorithms.remove(position);
@@ -1212,8 +1337,9 @@ impl MainView {
         };
         let sources = draft.sources.clone();
         if sources.is_empty() {
+            let message = self.localized("请先选择要压缩的文件或文件夹").to_string();
             if let Some(draft) = &mut self.new_draft {
-                draft.error = Some("请先选择要压缩的文件或文件夹".to_string());
+                draft.error = Some(message);
             }
             cx.notify();
             return;
@@ -1236,8 +1362,9 @@ impl MainView {
             .unwrap_or_else(|| default_output_dir(draft));
         let name = self.new_name.read(cx).value().to_string();
         if name.trim().is_empty() {
+            let message = self.localized("请输入压缩包名称").to_string();
             if let Some(draft) = &mut self.new_draft {
-                draft.error = Some("请输入压缩包名称".to_string());
+                draft.error = Some(message);
             }
             cx.notify();
             return;
@@ -1246,8 +1373,9 @@ impl MainView {
             .chars()
             .any(|ch| matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
         {
+            let message = self.localized("压缩包名称包含不允许的字符").to_string();
             if let Some(draft) = &mut self.new_draft {
-                draft.error = Some("压缩包名称不能包含 \\ / : * ? \" < > |".to_string());
+                draft.error = Some(message);
             }
             cx.notify();
             return;
@@ -1260,15 +1388,19 @@ impl MainView {
         let password = self.new_password.read(cx).unmask_value().to_string();
         let comment = self.new_comment.read(cx).value().trim().to_string();
         if sfx && !password.is_empty() {
+            let message = self.localized("SFX 暂不支持密码载荷").to_string();
             if let Some(draft) = &mut self.new_draft {
-                draft.error = Some("SFX 暂不支持密码载荷".to_string());
+                draft.error = Some(message);
             }
             cx.notify();
             return;
         }
         if !password.is_empty() && !(format.is_zip() || matches!(format, ArchiveFormat::SevenZ)) {
+            let message = self
+                .localized("加密写入仅支持 ZIP(AES-256) 与 7Z(AES-256)")
+                .to_string();
             if let Some(draft) = &mut self.new_draft {
-                draft.error = Some("加密写入仅支持 ZIP(AES-256) 与 7Z(AES-256)".to_string());
+                draft.error = Some(message);
             }
             cx.notify();
             return;
@@ -1313,11 +1445,13 @@ impl MainView {
     ) {
         let id = self.next_task_id;
         self.next_task_id += 1;
-        let title = format!(
+        let title = crate::i18n::tr_fmt(
+            self.language,
             "压缩 {}",
-            dest.file_name()
+            &[&dest
+                .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default()
+                .unwrap_or_default()],
         );
         let mut task = TaskItem::new(
             id,
@@ -1327,15 +1461,21 @@ impl MainView {
                 dest: dest.clone(),
                 options: options.clone(),
             }),
+            self.language,
         );
-        task.detail = format!("{} 个源 · {}", sources.len(), dest.display());
+        task.detail = crate::i18n::tr_fmt(
+            self.language,
+            "{} 个源 · {}",
+            &[&sources.len(), &dest.display()],
+        );
         let cancel = task.cancel.clone();
         let dest_existed = dest.exists();
         self.tasks.insert(0, task);
         let sender = self.task_sender.clone();
         let password = options.password.clone();
+        let language = self.language;
         std::thread::spawn(move || {
-            let sink = GuiSink::new(sender.clone(), id, cancel);
+            let sink = GuiSink::new(sender.clone(), id, cancel, language);
             let result = create_archive(&sources, &dest, &options, &sink);
             if result.is_err() && !dest_existed {
                 let _ = std::fs::remove_file(&dest);
@@ -1345,7 +1485,7 @@ impl MainView {
                 result: JobResult::Create { password, result },
             });
         });
-        self.show_toast("压缩任务已开始", ToastKind::Info, cx);
+        self.show_toast(self.localized("压缩任务已开始"), ToastKind::Info, cx);
         cx.notify();
     }
 
@@ -1453,7 +1593,11 @@ impl MainView {
         }
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.show_toast(
-            format!("已复制 {} 个条目的完整路径", indices.len()),
+            crate::i18n::tr_fmt(
+                self.language,
+                "已复制 {} 个条目的完整路径",
+                &[&indices.len()],
+            ),
             ToastKind::Success,
             cx,
         );
@@ -1479,7 +1623,7 @@ impl MainView {
         if is_image_name(&entry.path) {
             self.selected = Some(index);
             self.refresh_preview(cx);
-            self.show_toast("已在右侧预览面板打开", ToastKind::Info, cx);
+            self.show_toast(self.localized("已在右侧预览面板打开"), ToastKind::Info, cx);
             cx.notify();
         } else {
             self.open_entry(index, window, cx);
@@ -1503,11 +1647,13 @@ impl MainView {
     fn spawn_extract(&mut self, path: PathBuf, options: ExtractOptions, cx: &mut Context<Self>) {
         let id = self.next_task_id;
         self.next_task_id += 1;
-        let title = format!(
+        let title = crate::i18n::tr_fmt(
+            self.language,
             "解压 {}",
-            path.file_name()
+            &[&path
+                .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default()
+                .unwrap_or_default()],
         );
         let mut task = TaskItem::new(
             id,
@@ -1516,13 +1662,15 @@ impl MainView {
                 path: path.clone(),
                 options: options.clone(),
             }),
+            self.language,
         );
-        task.detail = describe_extract_mode(&options, &path);
+        task.detail = describe_extract_mode(&options, &path, self.language);
         let cancel = task.cancel.clone();
         self.tasks.insert(0, task);
         let sender = self.task_sender.clone();
+        let language = self.language;
         std::thread::spawn(move || {
-            let sink = GuiSink::new(sender.clone(), id, cancel);
+            let sink = GuiSink::new(sender.clone(), id, cancel, language);
             let result = extract_archive(&path, &options, &sink);
             let _ = sender.send(TaskEvent::Finished {
                 id,
@@ -1548,11 +1696,13 @@ impl MainView {
     fn spawn_verify(&mut self, path: PathBuf, password: Option<String>, cx: &mut Context<Self>) {
         let id = self.next_task_id;
         self.next_task_id += 1;
-        let title = format!(
+        let title = crate::i18n::tr_fmt(
+            self.language,
             "校验 {}",
-            path.file_name()
+            &[&path
+                .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default()
+                .unwrap_or_default()],
         );
         let mut task = TaskItem::new(
             id,
@@ -1561,13 +1711,15 @@ impl MainView {
                 path: path.clone(),
                 password: password.clone(),
             }),
+            self.language,
         );
-        task.detail = "流式读取全部条目并校验 CRC".to_string();
+        task.detail = self.localized("流式读取全部条目并校验 CRC").to_string();
         let cancel = task.cancel.clone();
         self.tasks.insert(0, task);
         let sender = self.task_sender.clone();
+        let language = self.language;
         std::thread::spawn(move || {
-            let sink = GuiSink::new(sender.clone(), id, cancel);
+            let sink = GuiSink::new(sender.clone(), id, cancel, language);
             let result = verify_archive(&path, password.as_deref(), &sink);
             let _ = sender.send(TaskEvent::Finished {
                 id,
@@ -1630,7 +1782,8 @@ impl MainView {
         let id = self.next_task_id;
         self.next_task_id += 1;
         let title = format!(
-            "哈希 {}",
+            "{} {}",
+            crate::i18n::tr(self.language, "哈希"),
             path.file_name()
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_default()
@@ -1642,13 +1795,15 @@ impl MainView {
                 path: path.clone(),
                 algorithm,
             }),
+            self.language,
         );
         task.detail = algorithm.label().to_string();
         let cancel = task.cancel.clone();
         self.tasks.insert(0, task);
         let sender = self.task_sender.clone();
+        let language = self.language;
         std::thread::spawn(move || {
-            let sink = GuiSink::new(sender.clone(), id, cancel);
+            let sink = GuiSink::new(sender.clone(), id, cancel, language);
             let result = hash_file_with_progress(algorithm, &path, &sink);
             let _ = sender.send(TaskEvent::Finished {
                 id,
@@ -1685,11 +1840,15 @@ impl MainView {
         if let Some(path) = self.preview.cache.get(&index).filter(|path| path.exists()) {
             match open::that(path) {
                 Ok(()) => self.show_toast(
-                    format!("已用系统程序打开：{}", entry.name()),
+                    crate::i18n::tr_fmt(self.language, "已用系统程序打开：{}", &[&entry.name()]),
                     ToastKind::Info,
                     cx,
                 ),
-                Err(error) => self.show_toast(format!("打开失败：{error}"), ToastKind::Error, cx),
+                Err(error) => self.show_toast(
+                    crate::i18n::tr_fmt(self.language, "打开失败：{}", &[&error]),
+                    ToastKind::Error,
+                    cx,
+                ),
             }
             return;
         }
@@ -1765,7 +1924,11 @@ impl MainView {
                 cx.notify();
             }
             Err(error) => {
-                self.show_toast(format!("密码本试密失败：{error}"), ToastKind::Error, cx);
+                self.show_toast(
+                    crate::i18n::tr_fmt(self.language, "密码本试密失败：{}", &[&error]),
+                    ToastKind::Error,
+                    cx,
+                );
                 self.show_password_modal(archive, pending, None, cx);
                 cx.notify();
             }
@@ -1819,8 +1982,9 @@ impl MainView {
         };
         let password = self.password_input.read(cx).unmask_value().to_string();
         if password.is_empty() {
+            let message = self.localized("请输入密码").to_string();
             if let Some(Modal::Password { error, .. }) = &mut self.modal {
-                *error = Some("请输入密码".to_string());
+                *error = Some(message);
             }
             cx.notify();
             return;
@@ -1839,7 +2003,11 @@ impl MainView {
                 let mut book = PasswordBook::load_default();
                 if let Err(error) = book.remember(&password) {
                     self.show_toast(
-                        format!("密码正确，但写入密码本失败：{error}"),
+                        crate::i18n::tr_fmt(
+                            self.language,
+                            "密码正确，但写入密码本失败：{}",
+                            &[&error],
+                        ),
                         ToastKind::Info,
                         cx,
                     );
@@ -1850,8 +2018,9 @@ impl MainView {
                 self.execute_pending(pending, Some(password), cx);
             }
             Ok(false) => {
+                let message = self.localized("密码错误，请重试").to_string();
                 if let Some(Modal::Password { error, .. }) = &mut self.modal {
-                    *error = Some("密码错误，请重试".to_string());
+                    *error = Some(message);
                 }
                 cx.notify();
             }
@@ -1915,7 +2084,7 @@ impl MainView {
                     Some(RetrySpec::Extract { options, .. })
                         if options.mode == ExtractMode::Smart =>
                     {
-                        Some("智能解压")
+                        Some(self.localized("智能解压"))
                     }
                     _ => None,
                 };
@@ -1959,7 +2128,7 @@ impl MainView {
 
         let clear = design::link_action(
             "tasks-clear-all",
-            "全部清除",
+            self.localized("全部清除"),
             &palette,
             cx.listener(|this, _, _, cx| {
                 for task in &this.tasks {
@@ -1972,13 +2141,13 @@ impl MainView {
         let retry_failed = (failed > 0).then(|| {
             design::link_action(
                 "tasks-retry-failed",
-                "重试失败项",
+                self.localized("重试失败项"),
                 &palette,
                 cx.listener(|this, _, _, cx| this.retry_failed(cx)),
             )
         });
         let close = Button::new("tasks-close")
-            .label("关闭")
+            .label(self.localized("关闭"))
             .icon(icon(IconName::X, palette.text, 14.0))
             .outline()
             .h(px(30.0))
@@ -2005,7 +2174,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::font_px(13.5))
                             .text_color(palette.sub)
-                            .child("任务在后台执行，不阻塞主窗口"),
+                            .child(self.localized("任务在后台执行，不阻塞主窗口")),
                     )
                     .child(clear)
                     .when_some(retry_failed, |this, action| this.child(action)),
@@ -2015,9 +2184,9 @@ impl MainView {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .child(stat_chip(running, "运行中", palette.accent))
-                    .child(stat_chip(completed, "完成", palette.ok))
-                    .child(stat_chip(failed, "失败", palette.bad))
+                    .child(stat_chip(running, self.localized("运行中"), palette.accent))
+                    .child(stat_chip(completed, self.localized("完成"), palette.ok))
+                    .child(stat_chip(failed, self.localized("失败"), palette.bad))
                     .child(div().ml(px(6.0)).child(close)),
             );
 
@@ -2031,7 +2200,7 @@ impl MainView {
                     .justify_center()
                     .text_size(crate::theme::font_px(13.0))
                     .text_color(palette.muted)
-                    .child("拖入或双击压缩包后，任务会出现在这里"),
+                    .child(self.localized("拖入或双击压缩包后，任务会出现在这里")),
             );
         } else {
             for snapshot in tasks {
@@ -2072,34 +2241,38 @@ impl MainView {
     fn render_task_card(&mut self, task: TaskSnapshot, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
         let failed = matches!(&task.status, TaskStatus::Failed);
-        let password_wait = task.is_running() && task.phase.contains("密码");
+        let password_wait = task.is_running() && task.phase.contains(self.localized("密码"));
         let (status_text, badge_bg, badge_fg, task_icon) = match &task.status {
             TaskStatus::Running if password_wait => (
-                "试密中".to_string(),
+                self.localized("试密中").to_string(),
                 palette.accent_soft,
                 palette.accent,
                 IconName::Key,
             ),
             TaskStatus::Running => (
-                format!("进行中 {:.0}%", task.progress),
+                crate::i18n::tr_fmt(
+                    self.language,
+                    "进行中 {}%",
+                    &[&format!("{:.0}", task.progress)],
+                ),
                 palette.accent_soft,
                 palette.accent,
                 IconName::LoaderCircle,
             ),
             TaskStatus::Completed => (
-                "完成".to_string(),
+                self.localized("完成").to_string(),
                 palette.ok_soft,
                 palette.ok,
                 IconName::Check,
             ),
             TaskStatus::Failed => (
-                "失败".to_string(),
+                self.localized("失败").to_string(),
                 palette.bad_soft,
                 palette.bad,
                 IconName::X,
             ),
             TaskStatus::Cancelled => (
-                "已取消".to_string(),
+                self.localized("已取消").to_string(),
                 palette.warn_soft,
                 palette.warn,
                 IconName::Ban,
@@ -2119,16 +2292,17 @@ impl MainView {
 
         let cancel = (task.is_running() && !password_wait).then(|| {
             Button::new(format!("task-cancel-{id}"))
-                .label("取消")
+                .label(self.localized("取消"))
                 .icon(icon(IconName::Ban, palette.bad, 13.0))
                 .outline()
                 .h(px(28.0))
                 .px(px(10.0))
                 .text_size(crate::theme::font_px(12.0))
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    let detail = this.localized("正在取消…").to_string();
                     if let Some(task) = this.tasks.iter_mut().find(|task| task.id == id) {
                         task.cancel.store(true, Ordering::Relaxed);
-                        task.detail = "正在取消…".to_string();
+                        task.detail = detail;
                     }
                     cx.notify();
                 }))
@@ -2137,30 +2311,32 @@ impl MainView {
             let path = archive_path.clone().unwrap_or_default();
             let modal_path = path.clone();
             Button::new(format!("task-password-{id}"))
-                .label("输入密码")
+                .label(self.localized("输入密码"))
                 .icon(icon(IconName::Key, palette.accent, 13.0))
                 .outline()
                 .h(px(28.0))
                 .px(px(10.0))
                 .text_size(crate::theme::font_px(12.0))
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    let detail = this.localized("已取消自动试密，等待手动输入").to_string();
+                    let message = this.localized("已取消自动尝试密码，请输入密码").to_string();
                     if let Some(task) = this.tasks.iter_mut().find(|task| task.id == id) {
                         task.cancel.store(true, Ordering::Relaxed);
-                        task.detail = "已取消自动试密，等待手动输入".to_string();
+                        task.detail = detail;
                     }
                     this.show_password_modal(
                         modal_path.clone(),
                         PendingAction::Open {
                             path: modal_path.clone(),
                         },
-                        Some("已取消自动尝试密码，请输入密码".to_string()),
+                        Some(message),
                         cx,
                     );
                 }))
         });
         let retry = (failed && task.has_retry).then(|| {
             Button::new(format!("task-retry-{id}"))
-                .label("重试")
+                .label(self.localized("重试"))
                 .icon(icon(IconName::RotateCcw, palette.accent, 13.0))
                 .outline()
                 .h(px(28.0))
@@ -2184,7 +2360,7 @@ impl MainView {
                 IconName::FolderOpen,
                 palette.sub,
                 false,
-                "打开所在位置",
+                self.localized("打开所在位置"),
                 move |_, _, _| {
                     let _ = open::that(&dest);
                 },
@@ -2196,7 +2372,7 @@ impl MainView {
             IconName::X,
             palette.muted,
             false,
-            "移除记录",
+            self.localized("移除记录"),
             cx.listener(move |this, _, _, cx| {
                 this.tasks.retain(|task| task.id != id);
                 cx.notify();
@@ -2380,9 +2556,13 @@ fn pending_path(pending: &PendingAction) -> PathBuf {
     }
 }
 
-fn describe_extract_mode(options: &ExtractOptions, archive: &Path) -> String {
+fn describe_extract_mode(
+    options: &ExtractOptions,
+    archive: &Path,
+    language: crate::i18n::Language,
+) -> String {
     match &options.mode {
-        ExtractMode::Smart => "智能解压".to_string(),
+        ExtractMode::Smart => crate::i18n::tr(language, "智能解压").to_string(),
         ExtractMode::Here => archive
             .parent()
             .map(|parent| parent.display().to_string())

@@ -10,6 +10,7 @@ use rarkzip_engine::{ArchiveFormat, HashAlgorithm};
 use crate::app::impls::default_output_dir;
 use crate::app::*;
 use crate::design;
+use crate::i18n::tr;
 
 type ClickCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,11 +280,11 @@ impl MainView {
     ) -> AnyElement {
         let palette = self.palette;
         let action = match &pending {
-            PendingAction::Open { .. } => "打开归档",
-            PendingAction::Extract { .. } => "解压",
-            PendingAction::Verify { .. } => "校验",
-            PendingAction::OpenEntry { .. } => "打开文件",
-            PendingAction::Prompt { .. } => "继续解压",
+            PendingAction::Open { .. } => self.localized("打开归档"),
+            PendingAction::Extract { .. } => self.localized("解压"),
+            PendingAction::Verify { .. } => self.localized("校验"),
+            PendingAction::OpenEntry { .. } => self.localized("打开文件"),
+            PendingAction::Prompt { .. } => self.localized("继续解压"),
         };
         let archive_name = archive
             .file_name()
@@ -291,15 +292,23 @@ impl MainView {
             .unwrap_or_else(|| archive.display().to_string());
         let quick_test = rarkzip_engine::supports_quick_password_test(&archive);
         let hint = match &pending {
-            PendingAction::Prompt { .. } => "嵌套/首层压缩包需要密码；输入正确后继续当前解压任务。",
-            _ if quick_test => "密码本自动尝试失败后才会弹窗；手动输入成功后会自动记入密码本末尾。",
-            _ => "该格式无法快速校验密码，不会自动尝试密码本；输入成功后会记入密码本末尾。",
+            PendingAction::Prompt { .. } => {
+                self.localized("嵌套/首层压缩包需要密码；输入正确后继续当前解压任务。")
+            }
+            _ if quick_test => {
+                self.localized("密码本自动尝试失败后才会弹窗；手动输入成功后会自动记入密码本末尾。")
+            }
+            _ => self.localized(
+                "该格式无法快速校验密码，不会自动尝试密码本；输入成功后会记入密码本末尾。",
+            ),
         };
         let mut body = vec![
             div()
                 .text_size(crate::theme::body())
                 .text_color(palette.sub)
-                .child(message.unwrap_or_else(|| format!("{action}需要密码：{archive_name}")))
+                .child(message.unwrap_or_else(|| {
+                    crate::i18n::tr_fmt(self.language, "{}需要密码：{}", &[&action, &archive_name])
+                }))
                 .into_any_element(),
             crate::components::control_height(Input::new(&self.password_input))
                 .text_size(crate::theme::body())
@@ -325,7 +334,7 @@ impl MainView {
                 div()
                     .text_size(crate::theme::caption())
                     .text_color(palette.muted)
-                    .child("密码本为空，可先在密码本页面添加常用密码。")
+                    .child(self.localized("密码本为空，可先在密码本页面添加常用密码。"))
                     .into_any_element(),
             );
         } else {
@@ -339,7 +348,11 @@ impl MainView {
                             .debug_selector(|| "password-book-toggle".to_string())
                             .child(
                                 Button::new("password-book-toggle")
-                                    .label(format!("从密码本选择（{}）", book.len()))
+                                    .label(crate::i18n::tr_fmt(
+                                        self.language,
+                                        "从密码本选择（{}）",
+                                        &[&book.len()],
+                                    ))
                                     .icon(icon(IconName::BookOpen, palette.accent, 15.0))
                                     .outline()
                                     .h(px(30.0))
@@ -362,9 +375,9 @@ impl MainView {
                         palette.sub,
                         false,
                         if reveal {
-                            "隐藏密码"
+                            self.localized("隐藏密码")
                         } else {
-                            "显示密码"
+                            self.localized("显示密码")
                         },
                         cx.listener(|this, _, _, cx| {
                             this.password_picker_reveal = !this.password_picker_reveal;
@@ -387,7 +400,7 @@ impl MainView {
                     .bg(palette.panel);
                 for (index, (note, password)) in book.iter().enumerate() {
                     let label = if note.is_empty() {
-                        format!("密码 {}", index + 1)
+                        crate::i18n::tr_fmt(self.language, "密码 {}", &[&(index + 1)])
                     } else {
                         note.clone()
                     };
@@ -439,7 +452,7 @@ impl MainView {
                     div()
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("点击密码即可直接尝试，无需再次点“解锁”。")
+                        .child(self.localized("点击密码即可直接尝试，无需再次点“解锁”。"))
                         .into_any_element(),
                 );
             }
@@ -456,13 +469,13 @@ impl MainView {
         let footer = vec![
             design::secondary_action(
                 "password-cancel",
-                "取消",
+                self.localized("取消"),
                 cx.listener(|this, _, _, cx| this.close_modal(cx)),
             )
             .into_any_element(),
             design::primary_icon_action(
                 "password-ok",
-                "解锁",
+                self.localized("解锁"),
                 IconName::Lock,
                 &palette,
                 false,
@@ -474,13 +487,15 @@ impl MainView {
             &palette,
             430.0,
             max_height,
-            "输入密码",
+            self.localized("输入密码"),
             Some(if matches!(pending, PendingAction::Prompt { .. }) {
-                "输入密码后继续当前解压任务。".to_string()
+                self.localized("输入密码后继续当前解压任务。").to_string()
             } else if quick_test {
-                "按密码本顺序全部失败，请手动输入。".to_string()
+                self.localized("按密码本顺序全部失败，请手动输入。")
+                    .to_string()
             } else {
-                "该格式无法快速试密，请输入密码。".to_string()
+                self.localized("该格式无法快速试密，请输入密码。")
+                    .to_string()
             }),
             None,
             body,
@@ -507,7 +522,7 @@ impl MainView {
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
-                .child(design::field_label(&palette, "原路径"))
+                .child(design::field_label(&palette, self.localized("原路径")))
                 .child(
                     div()
                         .px(px(12.0))
@@ -524,7 +539,7 @@ impl MainView {
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
-                .child(design::field_label(&palette, "新路径"))
+                .child(design::field_label(&palette, self.localized("新路径")))
                 .child(
                     crate::components::control_height(Input::new(&self.rename_input))
                         .text_size(crate::theme::body())
@@ -535,13 +550,13 @@ impl MainView {
         let footer = vec![
             design::secondary_action(
                 "rename-cancel",
-                "取消",
+                self.localized("取消"),
                 cx.listener(|this, _, _, cx| this.close_modal(cx)),
             )
             .into_any_element(),
             design::primary_icon_action(
                 "rename-save",
-                "保存",
+                self.localized("保存"),
                 IconName::Check,
                 &palette,
                 false,
@@ -553,8 +568,11 @@ impl MainView {
             &palette,
             460.0,
             max_height,
-            "重命名条目",
-            Some("路径使用 / 分隔；修改会重写 ZIP 归档。".to_string()),
+            self.localized("重命名条目"),
+            Some(
+                self.localized("路径使用 / 分隔；修改会重写 ZIP 归档。")
+                    .to_string(),
+            ),
             None,
             body,
             footer,
@@ -570,7 +588,7 @@ impl MainView {
     ) -> AnyElement {
         let palette = self.palette;
         let location = if parent.is_empty() {
-            "根目录".to_string()
+            self.localized("根目录").to_string()
         } else {
             parent.to_string()
         };
@@ -579,7 +597,7 @@ impl MainView {
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
-                .child(design::field_label(&palette, "位置"))
+                .child(design::field_label(&palette, self.localized("位置")))
                 .child(
                     div()
                         .px(px(12.0))
@@ -596,7 +614,7 @@ impl MainView {
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
-                .child(design::field_label(&palette, "文件夹名称"))
+                .child(design::field_label(&palette, self.localized("文件夹名称")))
                 .child(
                     crate::components::control_height(Input::new(&self.rename_input))
                         .text_size(crate::theme::body())
@@ -607,13 +625,13 @@ impl MainView {
         let footer = vec![
             design::secondary_action(
                 "new-folder-cancel",
-                "取消",
+                self.localized("取消"),
                 cx.listener(|this, _, _, cx| this.close_modal(cx)),
             )
             .into_any_element(),
             design::primary_icon_action(
                 "new-folder-create",
-                "创建",
+                self.localized("创建"),
                 IconName::FolderPlus,
                 &palette,
                 false,
@@ -625,8 +643,11 @@ impl MainView {
             &palette,
             460.0,
             max_height,
-            "新建文件夹",
-            Some("在当前目录创建一个空文件夹条目。".to_string()),
+            self.localized("新建文件夹"),
+            Some(
+                self.localized("在当前目录创建一个空文件夹条目。")
+                    .to_string(),
+            ),
             None,
             body,
             footer,
@@ -641,7 +662,7 @@ impl MainView {
                 .font_family(crate::theme::ui_font_family())
                 .text_size(crate::theme::caption())
                 .text_color(palette.muted)
-                .child("ZIP 归档注释；留空表示清除注释")
+                .child(self.localized("ZIP 归档注释；留空表示清除注释"))
                 .into_any_element(),
             crate::components::control_height(Input::new(&self.comment_input))
                 .font_family(crate::theme::ui_font_family())
@@ -652,13 +673,13 @@ impl MainView {
         let footer = vec![
             design::secondary_action(
                 "comment-cancel",
-                "取消",
+                self.localized("取消"),
                 cx.listener(|this, _, _, cx| this.close_modal(cx)),
             )
             .into_any_element(),
             design::primary_icon_action(
                 "comment-save",
-                "保存",
+                self.localized("保存"),
                 IconName::Check,
                 &palette,
                 false,
@@ -670,8 +691,8 @@ impl MainView {
             &palette,
             480.0,
             max_height,
-            "编辑注释",
-            Some("兼容 ZIP 标准注释字段。".to_string()),
+            self.localized("编辑注释"),
+            Some(self.localized("兼容 ZIP 标准注释字段。").to_string()),
             None,
             body,
             footer,
@@ -700,7 +721,7 @@ impl MainView {
             .font_weight(FontWeight::MEDIUM)
             .text_color(palette.accent)
             .child(icon(IconName::Lock, palette.accent, 13.0))
-            .child(format!("{count} 条密码"));
+            .child(crate::i18n::tr_fmt(self.language, "{} 条密码", &[&count]));
         let meta_row = div()
             .flex()
             .items_center()
@@ -714,12 +735,17 @@ impl MainView {
                     .text_size(crate::theme::body())
                     .text_color(palette.sub)
                     .child(count_badge)
-                    .child("Windows DPAPI 加密保存"),
+                    .child(self.localized("Windows DPAPI 加密保存")),
             )
             .child(design::switch(
                 &palette,
                 "pw-reveal",
                 reveal,
+                if reveal {
+                    self.localized("隐藏密码")
+                } else {
+                    self.localized("显示密码")
+                },
                 cx.listener(|this, _, _, cx| {
                     this.password_reveal = !this.password_reveal;
                     cx.notify();
@@ -734,7 +760,7 @@ impl MainView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(design::field_label(&palette, "新密码"))
+                    .child(design::field_label(&palette, self.localized("新密码")))
                     .child(
                         crate::components::control_height(Input::new(&self.password_new))
                             .text_size(crate::theme::body())
@@ -745,7 +771,7 @@ impl MainView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(design::field_label(&palette, "备注"))
+                    .child(design::field_label(&palette, self.localized("备注")))
                     .child(
                         crate::components::control_height(Input::new(&self.password_note))
                             .text_size(crate::theme::body())
@@ -754,7 +780,7 @@ impl MainView {
             )
             .child(
                 Button::new("pw-add")
-                    .label("添加")
+                    .label(self.localized("添加"))
                     .icon(icon(IconName::Plus, palette.accent_text, 15.0))
                     .primary()
                     .h(px(crate::components::CONTROL_HEIGHT))
@@ -763,7 +789,7 @@ impl MainView {
                     .on_click(cx.listener(|this, _, window, cx| {
                         let password = this.password_new.read(cx).value().to_string();
                         if password.is_empty() {
-                            this.show_toast("密码不能为空", ToastKind::Error, cx);
+                            this.show_toast(this.localized("密码不能为空"), ToastKind::Error, cx);
                             return;
                         }
                         if this
@@ -772,14 +798,14 @@ impl MainView {
                             .iter()
                             .any(|entry| entry.password == password)
                         {
-                            this.show_toast("该密码已存在", ToastKind::Info, cx);
+                            this.show_toast(this.localized("该密码已存在"), ToastKind::Info, cx);
                             return;
                         }
                         let note = this.password_note.read(cx).value().trim().to_string();
                         this.password_book.add(password, note);
                         if let Err(error) = this.password_book.save() {
                             this.show_toast(
-                                format!("保存密码本失败：{error}"),
+                                crate::i18n::tr_fmt(this.language, "保存密码本失败：{}", &[&error]),
                                 ToastKind::Error,
                                 cx,
                             );
@@ -790,7 +816,7 @@ impl MainView {
                             this.password_note.update(cx, |state, cx| {
                                 state.set_value("", window, cx);
                             });
-                            this.show_toast("已添加密码", ToastKind::Success, cx);
+                            this.show_toast(this.localized("已添加密码"), ToastKind::Success, cx);
                         }
                         cx.notify();
                     })),
@@ -817,9 +843,19 @@ impl MainView {
                 .border_b_1()
                 .border_color(palette.line)
                 .child(header_cell("#", Some(42.0), false, false))
-                .child(header_cell("密码", None, true, false))
-                .child(header_cell("备注", Some(180.0), false, false))
-                .child(header_cell("操作", Some(130.0), false, true)),
+                .child(header_cell(self.localized("密码"), None, true, false))
+                .child(header_cell(
+                    self.localized("备注"),
+                    Some(180.0),
+                    false,
+                    false,
+                ))
+                .child(header_cell(
+                    self.localized("操作"),
+                    Some(130.0),
+                    false,
+                    true,
+                )),
         );
 
         if count == 0 {
@@ -831,7 +867,7 @@ impl MainView {
                     .justify_center()
                     .text_size(crate::theme::body())
                     .text_color(palette.muted)
-                    .child("密码本为空"),
+                    .child(self.localized("密码本为空")),
             );
         } else {
             for index in 0..count {
@@ -896,14 +932,18 @@ impl MainView {
                                     IconName::Copy,
                                     palette.sub,
                                     false,
-                                    "复制密码",
+                                    self.localized("复制密码"),
                                     cx.listener({
                                         let password = entry.password.clone();
                                         move |this, _, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 password.clone(),
                                             ));
-                                            this.show_toast("已复制密码", ToastKind::Success, cx);
+                                            this.show_toast(
+                                                this.localized("已复制密码"),
+                                                ToastKind::Success,
+                                                cx,
+                                            );
                                         }
                                     }),
                                 ))
@@ -913,7 +953,7 @@ impl MainView {
                                     IconName::ArrowUp,
                                     palette.sub,
                                     index == 0,
-                                    "上移",
+                                    self.localized("上移"),
                                     cx.listener(move |this, _, _, cx| {
                                         this.password_book.move_up(index);
                                         let _ = this.password_book.save();
@@ -926,7 +966,7 @@ impl MainView {
                                     IconName::ArrowDown,
                                     palette.sub,
                                     index + 1 >= count,
-                                    "下移",
+                                    self.localized("下移"),
                                     cx.listener(move |this, _, _, cx| {
                                         this.password_book.move_down(index);
                                         let _ = this.password_book.save();
@@ -938,7 +978,7 @@ impl MainView {
                                     format!("pw-remove-{index}"),
                                     IconName::Trash,
                                     false,
-                                    "删除",
+                                    self.localized("删除"),
                                     cx.listener(move |this, _, _, cx| {
                                         this.modal = Some(Modal::ConfirmDeletePassword { index });
                                         cx.notify();
@@ -955,24 +995,25 @@ impl MainView {
 
         let note = design::info_note(
             &palette,
-            "删除、上移或下移后立即保存；自动试密严格按上表顺序执行。",
+            self.localized("删除、上移或下移后立即保存；自动试密严格按上表顺序执行。"),
         );
 
+        let password_text_filter = self.localized("文本密码本");
         let import = design::secondary_icon_action(
             "pw-import",
-            "导入",
+            self.localized("导入"),
             IconName::Upload,
             palette.text,
-            cx.listener(|this, _, _, cx| {
-                let Some(path) = crate::components::file_dialog(|| {
+            cx.listener(move |this, _, _, cx| {
+                let Some(path) = crate::components::file_dialog(move || {
                     rfd::FileDialog::new()
-                        .add_filter("文本密码本", &["txt", "csv"])
+                        .add_filter(password_text_filter, &["txt", "csv"])
                         .pick_file()
                 }) else {
                     return;
                 };
                 let Ok(text) = std::fs::read_to_string(&path) else {
-                    this.show_toast("读取密码文件失败", ToastKind::Error, cx);
+                    this.show_toast(this.localized("读取密码文件失败"), ToastKind::Error, cx);
                     return;
                 };
                 let mut added = 0usize;
@@ -984,7 +1025,7 @@ impl MainView {
                     let (password, note) = line
                         .split_once('\t')
                         .map(|(password, note)| (password.trim(), note.trim()))
-                        .unwrap_or((line, "导入"));
+                        .unwrap_or((line, this.localized("导入")));
                     if password.is_empty()
                         || this
                             .password_book
@@ -998,19 +1039,23 @@ impl MainView {
                     added += 1;
                 }
                 let _ = this.password_book.save();
-                this.show_toast(format!("已导入 {added} 条密码"), ToastKind::Success, cx);
+                this.show_toast(
+                    crate::i18n::tr_fmt(this.language, "已导入 {} 条密码", &[&added]),
+                    ToastKind::Success,
+                    cx,
+                );
                 cx.notify();
             }),
         );
         let export = design::secondary_icon_action(
             "pw-export",
-            "导出",
+            self.localized("导出"),
             IconName::Download,
             palette.text,
-            cx.listener(|this, _, _, cx| {
-                let Some(path) = crate::components::file_dialog(|| {
+            cx.listener(move |this, _, _, cx| {
+                let Some(path) = crate::components::file_dialog(move || {
                     rfd::FileDialog::new()
-                        .add_filter("文本密码本", &["txt"])
+                        .add_filter(password_text_filter, &["txt"])
                         .set_file_name("rarkzip-passwords.txt")
                         .save_file()
                 }) else {
@@ -1031,23 +1076,26 @@ impl MainView {
                     .join("\r\n");
                 match std::fs::write(&path, text) {
                     Ok(()) => this.show_toast(
-                        format!("密码本已导出：{}", path.display()),
+                        crate::i18n::tr_fmt(this.language, "密码本已导出：{}", &[&path.display()]),
                         ToastKind::Success,
                         cx,
                     ),
-                    Err(error) => {
-                        this.show_toast(format!("导出失败：{error}"), ToastKind::Error, cx)
-                    }
+                    Err(error) => this.show_toast(
+                        crate::i18n::tr_fmt(this.language, "导出失败：{}", &[&error]),
+                        ToastKind::Error,
+                        cx,
+                    ),
                 }
             }),
         );
 
         design::page_shell(
             &palette,
-            "密码管理器",
-            "自动试密将按下方顺序执行；手动输入成功的密码会自动追加到末尾",
+            self.localized("密码管理器"),
+            self.localized("自动试密将按下方顺序执行；手动输入成功的密码会自动追加到末尾"),
             design::done_button(
                 &palette,
+                self.language,
                 cx.listener(|this, _, window, cx| this.close_page(window, cx)),
             ),
             vec![
@@ -1091,7 +1139,7 @@ impl MainView {
         let mut body = vec![div()
             .text_size(crate::theme::body())
             .text_color(palette.sub)
-            .child("确定从密码本删除这条密码吗？删除后自动试密将不再使用它。")
+            .child(self.localized("确定从密码本删除这条密码吗？删除后自动试密将不再使用它。"))
             .into_any_element()];
         if !note.is_empty() {
             body.push(
@@ -1101,7 +1149,7 @@ impl MainView {
                     .gap(px(8.0))
                     .text_size(crate::theme::caption())
                     .text_color(palette.muted)
-                    .child("备注")
+                    .child(self.localized("备注"))
                     .child(design::tag(&palette, note, design::TagTone::Manual))
                     .into_any_element(),
             );
@@ -1109,14 +1157,14 @@ impl MainView {
         let footer = vec![
             design::secondary_action(
                 "pw-delete-cancel",
-                "取消",
+                self.localized("取消"),
                 cx.listener(|this, _, _, cx| this.close_modal(cx)),
             )
             .into_any_element(),
             div()
                 .id("pw-delete-confirm")
                 .role(Role::Button)
-                .aria_label("删除")
+                .aria_label(self.localized("删除"))
                 .h(px(crate::components::CONTROL_HEIGHT))
                 .px(px(16.0))
                 .rounded(px(crate::theme::RADIUS_CONTROL))
@@ -1131,22 +1179,26 @@ impl MainView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.password_book.remove(index);
                     if let Err(error) = this.password_book.save() {
-                        this.show_toast(format!("保存密码本失败：{error}"), ToastKind::Error, cx);
+                        this.show_toast(
+                            crate::i18n::tr_fmt(this.language, "保存密码本失败：{}", &[&error]),
+                            ToastKind::Error,
+                            cx,
+                        );
                     } else {
-                        this.show_toast("已删除密码", ToastKind::Success, cx);
+                        this.show_toast(this.localized("已删除密码"), ToastKind::Success, cx);
                     }
                     this.modal = None;
                     cx.notify();
                 }))
-                .child("删除")
+                .child(self.localized("删除"))
                 .into_any_element(),
         ];
         design::modal_shell(
             &palette,
             440.0,
             max_height,
-            "删除密码",
-            Some("此操作无法撤销。".to_string()),
+            self.localized("删除密码"),
+            Some(self.localized("此操作无法撤销。").to_string()),
             None,
             body,
             footer,
@@ -1159,6 +1211,7 @@ impl MainView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
+        let archive_filter = self.localized("压缩包");
         let running = self.recovery_running;
         let paused = self.recovery_paused;
         let mode = self.recovery_mode;
@@ -1173,9 +1226,15 @@ impl MainView {
         };
 
         let mut stepper = div().flex().items_center();
-        for (index, label) in ["选择目标", "模式", "参数", "恢复", "完成"]
-            .into_iter()
-            .enumerate()
+        for (index, label) in [
+            self.localized("选择目标"),
+            self.localized("模式"),
+            self.localized("参数"),
+            self.localized("恢复"),
+            self.localized("完成"),
+        ]
+        .into_iter()
+        .enumerate()
         {
             let number = index + 1;
             let state = if number < step {
@@ -1195,11 +1254,15 @@ impl MainView {
             .recovery_path
             .as_ref()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "尚未选择压缩包".to_string());
+            .unwrap_or_else(|| self.localized("尚未选择压缩包").to_string());
         let target_panel = design::panel(&palette)
             .flex()
             .flex_col()
-            .child(design::panel_title(&palette, IconName::Target, "恢复目标"))
+            .child(design::panel_title(
+                &palette,
+                IconName::Target,
+                self.localized("恢复目标"),
+            ))
             .child(
                 div()
                     .mt(px(14.0))
@@ -1230,14 +1293,14 @@ impl MainView {
                     )
                     .child(design::secondary_icon_action(
                         "recovery-pick",
-                        "选择压缩包…",
+                        self.localized("选择压缩包…"),
                         IconName::FolderOpen,
                         palette.text,
-                        cx.listener(|this, _, window, cx| {
+                        cx.listener(move |this, _, window, cx| {
                             let Some(path) = crate::components::file_dialog_in(window, move || {
                                 rfd::FileDialog::new()
                                     .add_filter(
-                                        "压缩包",
+                                        archive_filter,
                                         &["zip", "7z", "rar", "tar", "gz", "tgz", "xz", "zst"],
                                     )
                                     .pick_file()
@@ -1271,13 +1334,9 @@ impl MainView {
         let mode_card = |icon_name: IconName,
                          title: &'static str,
                          description: &'static str,
-                         selected: bool| {
+                         selected: bool,
+                         value: RecoveryUiMode| {
             let entity = cx.entity();
-            let value = match title {
-                "字典" => RecoveryUiMode::Dictionary,
-                "掩码" => RecoveryUiMode::Mask,
-                _ => RecoveryUiMode::Brute,
-            };
             let mut card = div()
                 .id(format!("recovery-mode-{title}"))
                 .role(Role::Button)
@@ -1363,21 +1422,24 @@ impl MainView {
             .gap(px(12.0))
             .child(mode_card(
                 IconName::ClipboardList,
-                "字典",
-                "从字典文件逐行读取候选密码，速度快、命中率高",
+                self.localized("字典"),
+                self.localized("从字典文件逐行读取候选密码，速度快、命中率高"),
                 mode == RecoveryUiMode::Dictionary,
+                RecoveryUiMode::Dictionary,
             ))
             .child(mode_card(
                 IconName::SquareFunction,
-                "掩码",
-                "按已知字符结构生成组合，如已知前缀或长度",
+                self.localized("掩码"),
+                self.localized("按已知字符结构生成组合，如已知前缀或长度"),
                 mode == RecoveryUiMode::Mask,
+                RecoveryUiMode::Mask,
             ))
             .child(mode_card(
                 IconName::Zap,
-                "暴力",
-                "遍历指定字符集的全部排列组合，耗时最长",
+                self.localized("暴力"),
+                self.localized("遍历指定字符集的全部排列组合，耗时最长"),
                 mode == RecoveryUiMode::Brute,
+                RecoveryUiMode::Brute,
             ));
 
         let params: AnyElement = match mode {
@@ -1404,13 +1466,13 @@ impl MainView {
                                 .flex_none()
                                 .text_size(crate::theme::caption())
                                 .text_color(palette.muted)
-                                .child(format!("· {count} 条")),
+                                .child(crate::i18n::tr_fmt(self.language, "· {} 条", &[&count])),
                         )
                         .into_any_element(),
                     _ => div()
                         .text_size(crate::theme::body())
                         .text_color(palette.muted)
-                        .child("尚未导入字典文件")
+                        .child(self.localized("尚未导入字典文件"))
                         .into_any_element(),
                 };
                 div()
@@ -1425,44 +1487,61 @@ impl MainView {
                     .border_dashed()
                     .border_color(palette.line_strong)
                     .child(status)
-                    .child(design::secondary_icon_action(
-                        "recovery-dict",
-                        "选择字典…",
-                        IconName::FileText,
-                        palette.text,
-                        cx.listener(|this, _, window, cx| {
-                            let Some(path) = crate::components::file_dialog_in(window, move || {
-                                rfd::FileDialog::new()
-                                    .add_filter("字典/密码本", &["txt", "lst", "dict", "csv"])
-                                    .pick_file()
-                            }) else {
-                                return;
-                            };
-                            match std::fs::read_to_string(&path) {
-                                Ok(text) => {
-                                    let words: Vec<String> = text
-                                        .lines()
-                                        .map(|line| line.trim().to_string())
-                                        .filter(|line| !line.is_empty())
-                                        .collect();
-                                    let count = words.len();
-                                    this.recovery_dictionary = words;
-                                    this.recovery_dictionary_path = Some(path);
-                                    this.show_toast(
-                                        format!("已加载 {count} 条候选密码"),
-                                        ToastKind::Success,
+                    .child({
+                        let dictionary_filter = self.localized("字典/密码本");
+                        design::secondary_icon_action(
+                            "recovery-dict",
+                            self.localized("选择字典…"),
+                            IconName::FileText,
+                            palette.text,
+                            cx.listener(move |this, _, window, cx| {
+                                let Some(path) =
+                                    crate::components::file_dialog_in(window, move || {
+                                        rfd::FileDialog::new()
+                                            .add_filter(
+                                                dictionary_filter,
+                                                &["txt", "lst", "dict", "csv"],
+                                            )
+                                            .pick_file()
+                                    })
+                                else {
+                                    return;
+                                };
+                                match std::fs::read_to_string(&path) {
+                                    Ok(text) => {
+                                        let words: Vec<String> = text
+                                            .lines()
+                                            .map(|line| line.trim().to_string())
+                                            .filter(|line| !line.is_empty())
+                                            .collect();
+                                        let count = words.len();
+                                        this.recovery_dictionary = words;
+                                        this.recovery_dictionary_path = Some(path);
+                                        this.show_toast(
+                                            crate::i18n::tr_fmt(
+                                                this.language,
+                                                "已加载 {} 条候选密码",
+                                                &[&count],
+                                            ),
+                                            ToastKind::Success,
+                                            cx,
+                                        );
+                                    }
+                                    Err(error) => this.show_toast(
+                                        crate::i18n::tr_fmt(
+                                            this.language,
+                                            "读取字典失败：{}",
+                                            &[&error],
+                                        ),
+                                        ToastKind::Error,
                                         cx,
-                                    );
+                                    ),
                                 }
-                                Err(error) => this.show_toast(
-                                    format!("读取字典失败：{error}"),
-                                    ToastKind::Error,
-                                    cx,
-                                ),
-                            }
-                            cx.notify();
-                        }),
-                    ))
+                                cx.notify();
+                            }),
+                        )
+                        .into_any_element()
+                    })
                     .into_any_element()
             }
             RecoveryUiMode::Mask => div()
@@ -1473,7 +1552,9 @@ impl MainView {
                     div()
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("掩码：?l 小写  ?u 大写  ?d 数字  ?s 符号  ?a 全部  ?? 问号"),
+                        .child(self.localized(
+                            "掩码：?l 小写  ?u 大写  ?d 数字  ?s 符号  ?a 全部  ?? 问号",
+                        )),
                 )
                 .child(
                     crate::components::control_height(Input::new(&self.recovery_mask))
@@ -1531,7 +1612,7 @@ impl MainView {
                                     .gap(px(8.0))
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.sub)
-                                    .child("最短长度")
+                                    .child(self.localized("最短长度"))
                                     .child(min_stepper),
                             )
                             .child(
@@ -1541,7 +1622,7 @@ impl MainView {
                                     .gap(px(8.0))
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.sub)
-                                    .child("最长长度")
+                                    .child(self.localized("最长长度"))
                                     .child(max_stepper),
                             ),
                     )
@@ -1559,7 +1640,11 @@ impl MainView {
                     .items_center()
                     .justify_between()
                     .gap(px(12.0))
-                    .child(design::panel_title(&palette, IconName::Key, "恢复模式"))
+                    .child(design::panel_title(
+                        &palette,
+                        IconName::Key,
+                        self.localized("恢复模式"),
+                    ))
                     .child(
                         div()
                             .flex()
@@ -1567,7 +1652,7 @@ impl MainView {
                             .gap(px(10.0))
                             .text_size(crate::theme::body())
                             .text_color(palette.sub)
-                            .child("线程")
+                            .child(self.localized("线程"))
                             .child(thread_stepper),
                     ),
             )
@@ -1582,7 +1667,11 @@ impl MainView {
         let status: Option<AnyElement> = if running {
             let pause = design::secondary_icon_action(
                 "recovery-pause",
-                if paused { "继续" } else { "暂停" },
+                if paused {
+                    self.localized("继续")
+                } else {
+                    self.localized("暂停")
+                },
                 if paused {
                     IconName::Play
                 } else {
@@ -1597,12 +1686,12 @@ impl MainView {
             );
             let cancel = design::secondary_icon_action(
                 "recovery-cancel",
-                "取消",
+                self.localized("取消"),
                 IconName::X,
                 palette.bad,
                 cx.listener(|this, _, _, cx| {
                     this.recovery_control.cancel();
-                    this.show_toast("正在停止恢复…", ToastKind::Info, cx);
+                    this.show_toast(this.localized("正在停止恢复…"), ToastKind::Info, cx);
                 }),
             );
             Some(
@@ -1621,18 +1710,19 @@ impl MainView {
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(if paused { palette.warn } else { palette.accent })
                                     .child(if paused {
-                                        "已暂停"
+                                        self.localized("已暂停")
                                     } else {
-                                        "正在恢复密码…"
+                                        self.localized("正在恢复密码…")
                                     }),
                             )
                             .child(
                                 div()
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.muted)
-                                    .child(format!(
+                                    .child(crate::i18n::tr_fmt(
+                                        self.language,
                                         "已尝试 {} / {}",
-                                        self.recovery_attempts, self.recovery_total
+                                        &[&self.recovery_attempts, &self.recovery_total],
                                     )),
                             ),
                     )
@@ -1658,7 +1748,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.ok)
-                            .child("已找到密码，并已追加到密码本"),
+                            .child(self.localized("已找到密码，并已追加到密码本")),
                     )
                     .child(
                         div()
@@ -1681,7 +1771,7 @@ impl MainView {
                             )
                             .child(design::secondary_icon_action(
                                 "recovery-copy",
-                                "复制",
+                                self.localized("复制"),
                                 IconName::Copy,
                                 palette.text,
                                 cx.listener(move |_, _, _, cx| {
@@ -1706,7 +1796,7 @@ impl MainView {
             let mut button = div()
                 .id("recovery-start")
                 .role(Role::Button)
-                .aria_label("开始恢复")
+                .aria_label(self.localized("开始恢复"))
                 .w_full()
                 .h(px(44.0))
                 .rounded(px(crate::theme::RADIUS_OVERLAY))
@@ -1736,9 +1826,9 @@ impl MainView {
                     17.0,
                 ))
                 .child(if running {
-                    "恢复中…"
+                    self.localized("恢复中…")
                 } else {
-                    "开始恢复"
+                    self.localized("开始恢复")
                 });
             if can_start {
                 button = button
@@ -1751,7 +1841,7 @@ impl MainView {
 
         let note = design::info_note(
             &palette,
-            "恢复只做快速试密，不会整包解压；找到的密码会写入密码本。",
+            self.localized("恢复只做快速试密，不会整包解压；找到的密码会写入密码本。"),
         );
 
         let mut body = vec![
@@ -1786,15 +1876,15 @@ impl MainView {
         let palette = self.palette;
         let hidden = self.settings.general.hidden_toolbar_buttons.clone();
         let entries: [(&str, &str, IconName); 9] = [
-            ("new", "新建压缩包", IconName::PackagePlus),
-            ("open", "打开压缩包", IconName::FolderOpen),
-            ("extract", "解压", IconName::Download),
-            ("add", "添加文件", IconName::FilePlus),
-            ("test", "测试完整性", IconName::TestTube),
-            ("scan", "AMSI 扫描", IconName::ShieldCheck),
-            ("hash", "计算哈希", IconName::Hash),
-            ("delete", "删除条目", IconName::Trash),
-            ("encoding", "编码", IconName::Globe),
+            ("new", self.localized("新建压缩包"), IconName::PackagePlus),
+            ("open", self.localized("打开压缩包"), IconName::FolderOpen),
+            ("extract", self.localized("解压"), IconName::Download),
+            ("add", self.localized("添加文件"), IconName::FilePlus),
+            ("test", self.localized("测试完整性"), IconName::TestTube),
+            ("scan", self.localized("AMSI 扫描"), IconName::ShieldCheck),
+            ("hash", self.localized("计算哈希"), IconName::Hash),
+            ("delete", self.localized("删除条目"), IconName::Trash),
+            ("encoding", self.localized("编码"), IconName::Globe),
         ];
         let total = entries.len() + 1;
         let mut rows = design::row_list(&palette)
@@ -1854,7 +1944,7 @@ impl MainView {
                     "toolbar-settings",
                     true,
                     true,
-                    "设置",
+                    self.localized("设置"),
                     |_, _, _| {},
                 ))
                 .child(icon(IconName::Settings, palette.muted, 16.0))
@@ -1866,8 +1956,8 @@ impl MainView {
                         .flex_1()
                         .text_size(crate::theme::body())
                         .text_color(palette.muted)
-                        .child("设置")
-                        .child(design::fixed_tag(&palette, "固定显示")),
+                        .child(self.localized("设置"))
+                        .child(design::fixed_tag(&palette, self.localized("固定显示"))),
                 ),
         );
 
@@ -1875,7 +1965,7 @@ impl MainView {
         let footer = vec![
             design::secondary_icon_action(
                 "toolbar-reset",
-                "全部显示",
+                self.localized("全部显示"),
                 IconName::RotateCcw,
                 palette.text,
                 cx.listener(|this, _, _, cx| {
@@ -1887,7 +1977,7 @@ impl MainView {
             .into_any_element(),
             design::primary_icon_action(
                 "toolbar-done",
-                "完成",
+                self.localized("完成"),
                 IconName::Check,
                 &palette,
                 false,
@@ -1899,9 +1989,15 @@ impl MainView {
             &palette,
             560.0,
             max_height,
-            "工具栏按钮",
-            Some("隐藏不常用的按钮，保留核心工作流。".to_string()),
-            Some("选择要显示的工具栏按钮；菜单与窗口控制固定保留。".to_string()),
+            self.localized("工具栏按钮"),
+            Some(
+                self.localized("隐藏不常用的按钮，保留核心工作流。")
+                    .to_string(),
+            ),
+            Some(
+                self.localized("选择要显示的工具栏按钮；菜单与窗口控制固定保留。")
+                    .to_string(),
+            ),
             body,
             footer,
             cx.listener(|this, _, _, cx| this.close_modal(cx)),
@@ -2086,7 +2182,7 @@ impl MainView {
                             .text_color(palette.text)
                             .child(crate::i18n::tr(self.language, column.label()))
                             .when(is_name, |this| {
-                                this.child(design::fixed_tag(&palette, "固定显示"))
+                                this.child(design::fixed_tag(&palette, self.localized("固定显示")))
                             }),
                     )
                     .when_some(width_control, |this, control| this.child(control))
@@ -2101,7 +2197,7 @@ impl MainView {
                                 IconName::ArrowUp,
                                 palette.sub,
                                 index == 0,
-                                "上移",
+                                self.localized("上移"),
                                 cx.listener(move |this, _, _, cx| {
                                     if let Some(position) = this
                                         .settings
@@ -2127,7 +2223,7 @@ impl MainView {
                                 IconName::ArrowDown,
                                 palette.sub,
                                 index + 1 >= count,
-                                "下移",
+                                self.localized("下移"),
                                 cx.listener(move |this, _, _, cx| {
                                     if let Some(position) = this
                                         .settings
@@ -2155,7 +2251,7 @@ impl MainView {
         let footer = vec![
             design::secondary_icon_action(
                 "columns-reset",
-                "恢复默认",
+                self.localized("恢复默认"),
                 IconName::RotateCcw,
                 palette.text,
                 cx.listener(|this, _, _, cx| {
@@ -2170,7 +2266,7 @@ impl MainView {
             .into_any_element(),
             design::primary_icon_action(
                 "columns-done",
-                "完成",
+                self.localized("完成"),
                 IconName::Check,
                 &palette,
                 false,
@@ -2182,9 +2278,15 @@ impl MainView {
             &palette,
             660.0,
             max_height,
-            "列设置",
-            Some("选择显示列、调整列宽与顺序；设置会自动保存。".to_string()),
-            Some("拖拽表头可调整列顺序；此处也可用 ↑/↓、显隐与宽度。".to_string()),
+            self.localized("列设置"),
+            Some(
+                self.localized("选择显示列、调整列宽与顺序；设置会自动保存。")
+                    .to_string(),
+            ),
+            Some(
+                self.localized("拖拽表头可调整列顺序；此处也可用 ↑/↓、显隐与宽度。")
+                    .to_string(),
+            ),
             body,
             footer,
             cx.listener(|this, _, _, cx| this.close_modal(cx)),
@@ -2197,6 +2299,7 @@ impl MainView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
+        let language = self.language;
         let running = self.hash_batch_running;
         let count = self.hash_batch_paths.len();
         let algorithms = self.hash_batch_algorithms.clone();
@@ -2229,24 +2332,36 @@ impl MainView {
             (
                 IconName::Hash,
                 palette.accent,
-                format!("正在计算… {done} / {total}"),
+                format!("{} {done} / {total}", tr(language, "正在计算…")),
             )
         } else if count == 0 {
-            (IconName::Hash, palette.muted, "尚未添加文件".to_string())
+            (
+                IconName::Hash,
+                palette.muted,
+                tr(language, "尚未添加文件").to_string(),
+            )
         } else if has_results {
             (
                 IconName::CircleCheck,
                 palette.ok,
-                format!("计算完成 · {count} 个文件"),
+                format!(
+                    "{} · {count} {}",
+                    tr(language, "计算完成"),
+                    tr(language, "个文件")
+                ),
             )
         } else {
-            (IconName::Hash, palette.muted, "等待开始".to_string())
+            (
+                IconName::Hash,
+                palette.muted,
+                tr(language, "等待开始").to_string(),
+            )
         };
         let recalc = Button::new("hash-recalc")
             .label(if has_results {
-                "重新计算"
+                tr(language, "重新计算")
             } else {
-                "开始计算"
+                tr(language, "开始计算")
             })
             .icon(icon(IconName::RotateCcw, palette.text, 14.0))
             .outline()
@@ -2292,34 +2407,34 @@ impl MainView {
                         .gap(px(6.0))
                         .child(design::pill(
                             &palette,
-                            format!("匹配 {matched}"),
+                            format!("{} {matched}", tr(language, "匹配")),
                             design::TagTone::Ok,
                         ))
                         .when(insecure > 0, |this| {
                             this.child(design::pill(
                                 &palette,
-                                format!("不安全 {insecure}"),
+                                format!("{} {insecure}", tr(language, "不安全")),
                                 design::TagTone::Manual,
                             ))
                         })
                         .when(mismatched > 0, |this| {
                             this.child(design::pill(
                                 &palette,
-                                format!("不匹配 {mismatched}"),
+                                format!("{} {mismatched}", tr(language, "不匹配")),
                                 design::TagTone::Danger,
                             ))
                         })
                         .when(unchecked > 0, |this| {
                             this.child(design::pill(
                                 &palette,
-                                format!("未校验 {unchecked}"),
+                                format!("{} {unchecked}", tr(language, "未校验")),
                                 design::TagTone::Neutral,
                             ))
                         })
                         .when(errors > 0, |this| {
                             this.child(design::pill(
                                 &palette,
-                                format!("错误 {errors}"),
+                                format!("{} {errors}", tr(language, "错误")),
                                 design::TagTone::Danger,
                             ))
                         }),
@@ -2329,11 +2444,11 @@ impl MainView {
             .child(recalc);
 
         let verify_hint = if expected.contains_key("*") {
-            "已识别粘贴哈希".to_string()
+            tr(language, "已识别粘贴哈希").to_string()
         } else if expected_present {
-            format!("已载入 {} 条期望", expected.len())
+            format!("{} ({})", tr(language, "已载入期望"), expected.len())
         } else {
-            "未设置".to_string()
+            tr(language, "未设置").to_string()
         };
         let verify_row = div()
             .flex()
@@ -2348,7 +2463,7 @@ impl MainView {
                     .text_size(crate::theme::caption())
                     .text_color(palette.sub)
                     .child(icon(IconName::Target, palette.sub, 14.0))
-                    .child("校验"),
+                    .child(tr(language, "校验")),
             )
             .child(
                 div()
@@ -2375,7 +2490,7 @@ impl MainView {
                 .flex_none()
                 .text_size(crate::theme::caption())
                 .text_color(palette.sub)
-                .child("列"),
+                .child(tr(language, "列")),
         );
         for algorithm in HashAlgorithm::ALL {
             let selected = algorithms.contains(&algorithm);
@@ -2418,7 +2533,7 @@ impl MainView {
         let add_file = || {
             design::secondary_icon_action(
                 "hashbatch-files",
-                "添加文件…",
+                tr(language, "添加文件…"),
                 IconName::Plus,
                 palette.text,
                 cx.listener(|this, _, window, cx| this.add_hash_files(window, cx)),
@@ -2427,23 +2542,24 @@ impl MainView {
         let add_folder = || {
             design::secondary_icon_action(
                 "hashbatch-folder",
-                "添加文件夹…",
+                tr(language, "添加文件夹…"),
                 IconName::FolderOpen,
                 palette.text,
                 cx.listener(|this, _, window, cx| this.add_hash_folder(window, cx)),
             )
         };
+        let checksum_filter = tr(language, "校验文件");
         let load_checksum = || {
             design::secondary_icon_action(
                 "hashbatch-verify-file",
-                "载入校验文件…",
+                tr(language, "载入校验文件…"),
                 IconName::Upload,
                 palette.text,
-                cx.listener(|this, _, window, cx| {
+                cx.listener(move |this, _, window, cx| {
                     let Some(path) = crate::components::file_dialog_in(window, move || {
                         rfd::FileDialog::new()
                             .add_filter(
-                                "校验文件",
+                                checksum_filter,
                                 &["sha256", "sha1", "md5", "sha512", "txt", "sfv"],
                             )
                             .pick_file()
@@ -2476,13 +2592,13 @@ impl MainView {
                             this.hash_selected_row = None;
                             this.hash_context_menu = None;
                             this.show_toast(
-                                format!("已载入 {count} 条期望哈希"),
+                                format!("{} ({count})", tr(language, "已载入期望哈希")),
                                 ToastKind::Success,
                                 cx,
                             );
                         }
                         Err(error) => this.show_toast(
-                            format!("读取校验文件失败：{error}"),
+                            format!("{}: {error}", tr(language, "读取校验文件失败")),
                             ToastKind::Error,
                             cx,
                         ),
@@ -2512,8 +2628,8 @@ impl MainView {
                 &palette,
                 IconName::Hash,
                 40.0,
-                "尚未添加文件 · 可添加多个文件或整个文件夹",
-                "也可以直接把文件拖到这里",
+                tr(language, "尚未添加文件 · 可添加多个文件或整个文件夹"),
+                tr(language, "也可以直接把文件拖到这里"),
                 vec![
                     add_file().into_any_element(),
                     add_folder().into_any_element(),
@@ -2525,7 +2641,7 @@ impl MainView {
             let clear = (!running).then(|| {
                 design::link_action(
                     "hashbatch-clear",
-                    "清空",
+                    tr(language, "清空"),
                     &palette,
                     cx.listener(|this, _, _, cx| {
                         if !this.hash_batch_running {
@@ -2551,7 +2667,7 @@ impl MainView {
                         .text_size(crate::theme::body())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(palette.text)
-                        .child(format!("{count} 个文件")),
+                        .child(format!("{count} {}", tr(language, "个文件"))),
                 )
                 .when_some(clear, |this, clear| this.child(clear))
                 .child(div().flex_1())
@@ -2607,7 +2723,7 @@ impl MainView {
                         .pl(px(23.0))
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("文件名"),
+                        .child(tr(language, "文件名")),
                 )
                 .child(
                     div()
@@ -2616,7 +2732,7 @@ impl MainView {
                         .px(px(8.0))
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("算法"),
+                        .child(tr(language, "算法")),
                 )
                 .child(
                     div()
@@ -2625,7 +2741,7 @@ impl MainView {
                         .px(px(8.0))
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("哈希"),
+                        .child(tr(language, "哈希")),
                 );
 
             let mut table = div()
@@ -2639,7 +2755,7 @@ impl MainView {
                 let hash = row.hash.clone();
                 let hash_display = hash.clone().unwrap_or_else(|| {
                     if let Some(error) = &row.error {
-                        format!("错误：{error}")
+                        format!("{}: {error}", tr(language, "错误"))
                     } else {
                         "—".to_string()
                     }
@@ -2791,7 +2907,7 @@ impl MainView {
             div()
                 .text_size(crate::theme::caption())
                 .text_color(palette.muted)
-                .child("导出格式"),
+                .child(tr(language, "导出格式")),
         );
         for format in HashExportFormat::ALL {
             let selected = format == export_format;
@@ -2829,7 +2945,7 @@ impl MainView {
             hash_export_contents(&self.hash_batch_results, export_format, &self.settings.hash);
         let export_value = export_text.clone();
         let export = Button::new("hash-export")
-            .label("导出…")
+            .label(tr(language, "导出…"))
             .icon(icon(IconName::Download, palette.text, 14.0))
             .outline()
             .h(px(32.0))
@@ -2839,13 +2955,13 @@ impl MainView {
             .opacity(if export_text.is_empty() { 0.45 } else { 1.0 })
             .on_click(cx.listener(move |this, _, window, cx| {
                 if export_value.is_empty() {
-                    this.show_toast("没有可导出的哈希", ToastKind::Info, cx);
+                    this.show_toast(tr(language, "没有可导出的哈希"), ToastKind::Info, cx);
                     return;
                 }
                 let extension = this.hash_export_format.extension();
                 let Some(path) = crate::components::file_dialog_in(window, move || {
                     rfd::FileDialog::new()
-                        .add_filter("校验文件", &[extension])
+                        .add_filter(tr(language, "校验文件"), &[extension])
                         .set_file_name(format!("checksums.{extension}"))
                         .save_file()
                 }) else {
@@ -2853,18 +2969,20 @@ impl MainView {
                 };
                 match std::fs::write(&path, &export_value) {
                     Ok(()) => this.show_toast(
-                        format!("校验文件已保存：{}", path.display()),
+                        format!("{}: {}", tr(language, "校验文件已保存"), path.display()),
                         ToastKind::Success,
                         cx,
                     ),
-                    Err(error) => {
-                        this.show_toast(format!("保存失败：{error}"), ToastKind::Error, cx)
-                    }
+                    Err(error) => this.show_toast(
+                        format!("{}: {error}", tr(language, "保存失败")),
+                        ToastKind::Error,
+                        cx,
+                    ),
                 }
             }));
         let copy_value = export_text;
         let copy_all = Button::new("hash-copy-all")
-            .label("复制全部")
+            .label(tr(language, "复制全部"))
             .icon(icon(IconName::Copy, palette.text, 14.0))
             .outline()
             .h(px(32.0))
@@ -2874,11 +2992,11 @@ impl MainView {
             .opacity(if copy_value.is_empty() { 0.45 } else { 1.0 })
             .on_click(cx.listener(move |this, _, _, cx| {
                 if copy_value.is_empty() {
-                    this.show_toast("没有可复制的哈希", ToastKind::Info, cx);
+                    this.show_toast(tr(language, "没有可复制的哈希"), ToastKind::Info, cx);
                     return;
                 }
                 cx.write_to_clipboard(ClipboardItem::new_string(copy_value.clone()));
-                this.show_toast("哈希结果已复制", ToastKind::Success, cx);
+                this.show_toast(tr(language, "哈希结果已复制"), ToastKind::Success, cx);
             }));
 
         let footer = div()
@@ -2952,6 +3070,7 @@ impl MainView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
+        let language = self.language;
         let viewport = window.viewport_size();
         let width = 188.0;
         let estimated_height = 4.0 * 30.0 + 12.0;
@@ -2982,49 +3101,49 @@ impl MainView {
         let copy_hash_value = hash.clone();
         let copy_hash = self.hash_menu_item(
             "hash-ctx-copy-hash",
-            "复制哈希值",
+            tr(language, "复制哈希值"),
             hash.is_some(),
             move |this, _, cx| {
                 let Some(value) = copy_hash_value.clone() else {
                     return;
                 };
                 cx.write_to_clipboard(ClipboardItem::new_string(value));
-                this.show_toast("已复制哈希值", ToastKind::Info, cx);
+                this.show_toast(tr(language, "已复制哈希值"), ToastKind::Info, cx);
             },
             cx,
         );
         let copy_row_value = row_text;
         let copy_row = self.hash_menu_item(
             "hash-ctx-copy-row",
-            "复制整行",
+            tr(language, "复制整行"),
             hash.is_some(),
             move |this, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(copy_row_value.clone()));
-                this.show_toast("已复制整行", ToastKind::Info, cx);
+                this.show_toast(tr(language, "已复制整行"), ToastKind::Info, cx);
             },
             cx,
         );
         let copy_name = self.hash_menu_item(
             "hash-ctx-copy-name",
-            "复制文件名",
+            tr(language, "复制文件名"),
             true,
             move |this, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(file_name.clone()));
-                this.show_toast("已复制文件名", ToastKind::Info, cx);
+                this.show_toast(tr(language, "已复制文件名"), ToastKind::Info, cx);
             },
             cx,
         );
         let all_enabled = !all_text.is_empty();
         let copy_all = self.hash_menu_item(
             "hash-ctx-copy-all",
-            "复制全部",
+            tr(language, "复制全部"),
             all_enabled,
             move |this, _, cx| {
                 if all_text.is_empty() {
                     return;
                 }
                 cx.write_to_clipboard(ClipboardItem::new_string(all_text.clone()));
-                this.show_toast("已复制全部哈希", ToastKind::Info, cx);
+                this.show_toast(tr(language, "已复制全部哈希"), ToastKind::Info, cx);
             },
             cx,
         );
@@ -3116,7 +3235,7 @@ impl MainView {
 
         let add_files = design::secondary_icon_action(
             "new-add-files",
-            "添加文件",
+            self.localized("添加文件"),
             IconName::FileText,
             palette.text,
             cx.listener(|this, _, window, cx| {
@@ -3125,7 +3244,7 @@ impl MainView {
         );
         let add_folder = design::secondary_icon_action(
             "new-add-folder",
-            "添加文件夹",
+            self.localized("添加文件夹"),
             IconName::FolderOpen,
             palette.text,
             cx.listener(|this, _, window, cx| {
@@ -3135,7 +3254,7 @@ impl MainView {
         let clear_sources = (!sources.is_empty()).then(|| {
             design::link_action(
                 "new-clear-sources",
-                "清空",
+                self.localized("清空"),
                 &palette,
                 cx.listener(|this, _, _, cx| {
                     if let Some(draft) = &mut this.new_draft {
@@ -3161,10 +3280,10 @@ impl MainView {
                     .text_size(crate::theme::body())
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.text)
-                    .child("源文件")
+                    .child(self.localized("源文件"))
                     .child(design::pill(
                         &palette,
-                        format!("{} 项", sources.len()),
+                        crate::i18n::tr_fmt(self.language, "{} 项", &[&sources.len()]),
                         design::TagTone::Accent,
                     )),
             )
@@ -3183,7 +3302,7 @@ impl MainView {
                 &palette,
                 IconName::FolderOpen,
                 34.0,
-                "尚未选择文件或文件夹 · 拖放即可添加",
+                self.localized("尚未选择文件或文件夹 · 拖放即可添加"),
                 "",
                 Vec::new(),
                 120.0,
@@ -3256,7 +3375,7 @@ impl MainView {
                             IconName::X,
                             palette.muted,
                             false,
-                            "移除源文件",
+                            self.localized("移除源文件"),
                             cx.listener(move |this, _, _, cx| {
                                 if let Some(draft) = &mut this.new_draft {
                                     draft.sources.retain(|path| path != &remove_path);
@@ -3280,7 +3399,7 @@ impl MainView {
         };
 
         let format_label = if sfx {
-            "ZIP · 自解压 EXE".to_string()
+            self.localized("ZIP · 自解压 EXE").to_string()
         } else {
             format.label().to_string()
         };
@@ -3320,7 +3439,7 @@ impl MainView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(design::field_label(&palette, "压缩包名"))
+                    .child(design::field_label(&palette, self.localized("压缩包名")))
                     .child(
                         crate::components::control_height(Input::new(&self.new_name))
                             .text_size(crate::theme::body())
@@ -3331,7 +3450,7 @@ impl MainView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(design::field_label(&palette, "压缩格式"))
+                    .child(design::field_label(&palette, self.localized("压缩格式")))
                     .child(self.track_dropdown(
                         DropdownKind::NewFormat,
                         format_control.into_any_element(),
@@ -3339,7 +3458,7 @@ impl MainView {
                     )),
             );
 
-        let level_name = compression_level_name(level);
+        let level_name = self.localized(compression_level_name(level));
         let level_block = div()
             .flex()
             .flex_col()
@@ -3349,7 +3468,7 @@ impl MainView {
                     .flex()
                     .items_baseline()
                     .justify_between()
-                    .child(design::field_label(&palette, "压缩级别"))
+                    .child(design::field_label(&palette, self.localized("压缩级别")))
                     .child(
                         div()
                             .text_size(crate::theme::body())
@@ -3363,7 +3482,7 @@ impl MainView {
                     Slider::new(&self.level_slider)
                         .w_full()
                         .h(px(24.0))
-                        .accessibility_label("压缩级别"),
+                        .accessibility_label(self.localized("压缩级别")),
                 ),
             )
             .child(
@@ -3372,11 +3491,15 @@ impl MainView {
                     .justify_between()
                     .text_size(crate::theme::caption())
                     .text_color(palette.muted)
-                    .child("仅存储 0")
-                    .child("极限 9"),
+                    .child(self.localized("仅存储 0"))
+                    .child(self.localized("极限 9")),
             );
 
-        let volume_label = crate::app::dropdown::volume_size_label(volume_size_mb);
+        let volume_label = if volume_size_mb == 0 {
+            self.localized("不分卷").to_string()
+        } else {
+            crate::app::dropdown::volume_size_label(volume_size_mb)
+        };
         let volume_control: AnyElement = if sfx {
             div()
                 .h(px(36.0))
@@ -3390,7 +3513,7 @@ impl MainView {
                 .bg(palette.panel)
                 .text_size(crate::theme::body())
                 .text_color(palette.muted)
-                .child("SFX 不支持分卷")
+                .child(self.localized("SFX 不支持分卷"))
                 .into_any_element()
         } else {
             let entity = cx.entity();
@@ -3428,18 +3551,19 @@ impl MainView {
             .flex()
             .flex_col()
             .gap(px(4.0))
-            .child(design::field_label(&palette, "分卷大小"))
+            .child(design::field_label(&palette, self.localized("分卷大小")))
             .child(volume_control)
             .child(
                 div()
                     .text_size(crate::theme::caption())
                     .text_color(palette.muted)
                     .child(if sfx {
-                        "自解压 EXE 只能输出单个文件".to_string()
+                        self.localized("自解压 EXE 只能输出单个文件").to_string()
                     } else if volume_size_mb > 0 {
-                        "输出为 .001、.002…，最后一卷可能更小".to_string()
+                        self.localized("输出为 .001、.002…，最后一卷可能更小")
+                            .to_string()
                     } else {
-                        "不分卷；超过所选大小时自动切分".to_string()
+                        self.localized("不分卷；超过所选大小时自动切分").to_string()
                     }),
             );
         let level_and_volume = div()
@@ -3453,7 +3577,10 @@ impl MainView {
             .flex_col()
             .flex_1()
             .min_w_0()
-            .child(design::field_label(&palette, "密码（留空不加密）"))
+            .child(design::field_label(
+                &palette,
+                self.localized("密码（留空不加密）"),
+            ))
             .child(
                 crate::components::control_height(Input::new(&self.new_password))
                     .text_size(crate::theme::body())
@@ -3465,7 +3592,7 @@ impl MainView {
                     .mt(px(5.0))
                     .text_size(crate::theme::caption())
                     .text_color(palette.bad)
-                    .child("SFX 不支持密码；请清除密码或取消自解压"),
+                    .child(self.localized("SFX 不支持密码；请清除密码或取消自解压")),
             );
         } else if !password.is_empty() && format.is_zip() {
             password_column = password_column.child(
@@ -3473,7 +3600,7 @@ impl MainView {
                     .mt(px(5.0))
                     .text_size(crate::theme::caption())
                     .text_color(palette.accent)
-                    .child("已自动启用 AES-256"),
+                    .child(self.localized("已自动启用 AES-256")),
             );
         } else if !password.is_empty() && format == ArchiveFormat::SevenZ {
             password_column = password_column.child(
@@ -3481,7 +3608,7 @@ impl MainView {
                     .mt(px(5.0))
                     .text_size(crate::theme::caption())
                     .text_color(palette.accent)
-                    .child("已启用 AES-256 内容加密 + 文件名加密"),
+                    .child(self.localized("已启用 AES-256 内容加密 + 文件名加密")),
             );
         } else if !password.is_empty() {
             password_column = password_column.child(
@@ -3489,14 +3616,14 @@ impl MainView {
                     .mt(px(5.0))
                     .text_size(crate::theme::caption())
                     .text_color(palette.bad)
-                    .child("当前格式不支持密码；请选择 ZIP/ZIPX 或 7Z"),
+                    .child(self.localized("当前格式不支持密码；请选择 ZIP/ZIPX 或 7Z")),
             );
         }
         let credentials_row = div().flex().gap(px(16.0)).child(password_column).child(
             div()
                 .flex_1()
                 .min_w_0()
-                .child(design::field_label(&palette, "排除过滤器"))
+                .child(design::field_label(&palette, self.localized("排除过滤器")))
                 .child(
                     crate::components::control_height(Input::new(&self.exclude_input))
                         .text_size(crate::theme::body())
@@ -3512,7 +3639,7 @@ impl MainView {
             .child(design::check_chip(
                 &palette,
                 "new-include-root",
-                "包含根文件夹",
+                self.localized("包含根文件夹"),
                 include_root,
                 false,
                 cx.listener(|this, _, _, cx| {
@@ -3525,7 +3652,7 @@ impl MainView {
             .child(design::check_chip(
                 &palette,
                 "new-delete",
-                "压缩后删除源文件",
+                self.localized("压缩后删除源文件"),
                 delete_sources,
                 false,
                 cx.listener(|this, _, _, cx| {
@@ -3538,7 +3665,7 @@ impl MainView {
             .child(design::check_chip(
                 &palette,
                 "new-test",
-                "压缩后测试",
+                self.localized("压缩后测试"),
                 test_after,
                 false,
                 cx.listener(|this, _, _, cx| {
@@ -3551,7 +3678,7 @@ impl MainView {
             .child(design::check_chip(
                 &palette,
                 "new-sfx",
-                "创建自解压 EXE（SFX）",
+                self.localized("创建自解压 EXE（SFX）"),
                 sfx,
                 false,
                 cx.listener(|this, _, window, cx| {
@@ -3604,7 +3731,7 @@ impl MainView {
                     .text_size(crate::theme::body())
                     .text_color(palette.sub)
                     .child(icon(IconName::Folder, palette.accent, 15.0))
-                    .child("输出到"),
+                    .child(self.localized("输出到")),
             )
             .child(
                 div()
@@ -3618,26 +3745,29 @@ impl MainView {
             )
             .child(design::link_action(
                 "new-dest",
-                "更改",
+                self.localized("更改"),
                 &palette,
                 cx.listener(|this, _, window, cx| this.pick_create_dest(window, cx)),
             ));
 
         let ratio = estimate_ratio(if sfx { ArchiveFormat::Zip } else { format });
         let split_note = if !sfx && volume_size_mb > 0 {
-            format!(" · 按 {} 分卷", volume_label)
+            crate::i18n::tr_fmt(self.language, " · 按 {} 分卷", &[&volume_label])
         } else {
             String::new()
         };
         let estimate = if source_bytes > 0 {
-            format!(
-                "{}（压缩后约占 {:.0}%）{}",
-                format_size((source_bytes as f64 * ratio) as u64),
-                ratio * 100.0,
-                split_note
+            crate::i18n::tr_fmt(
+                self.language,
+                "{}（压缩后约占 {}%）{}",
+                &[
+                    &format_size((source_bytes as f64 * ratio) as u64),
+                    &format!("{:.0}", ratio * 100.0),
+                    &split_note,
+                ],
             )
         } else {
-            "选择源文件后显示预估".to_string()
+            self.localized("选择源文件后显示预估").to_string()
         };
         let can_create = !sources.is_empty()
             && !name_value.trim().is_empty()
@@ -3690,27 +3820,30 @@ impl MainView {
                         .text_size(crate::theme::body())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(palette.text)
-                        .child("高级设置"),
+                        .child(self.localized("高级设置")),
                 )
                 .child(
                     div()
                         .text_size(crate::theme::caption())
                         .text_color(palette.muted)
-                        .child("随压缩格式联动显示可用选项"),
+                        .child(self.localized("随压缩格式联动显示可用选项")),
                 );
             match format {
                 format if format.is_zip() => {
                     card = card
-                        .child(design::field_label(&palette, "压缩方法"))
+                        .child(design::field_label(&palette, self.localized("压缩方法")))
                         .child(algorithm_control)
-                        .child(design::field_label(&palette, "加密算法"))
+                        .child(design::field_label(&palette, self.localized("加密算法")))
                         .child(crate::components::chip(
-                            "AES-256（设置密码后启用）",
+                            self.localized("AES-256（设置密码后启用）"),
                             &palette,
                         ))
-                        .child(design::field_label(&palette, "CPU 线程数"))
-                        .child(crate::components::chip("自动（引擎默认）", &palette))
-                        .child(design::field_label(&palette, "压缩包注释"))
+                        .child(design::field_label(&palette, self.localized("CPU 线程数")))
+                        .child(crate::components::chip(
+                            self.localized("自动（引擎默认）"),
+                            &palette,
+                        ))
+                        .child(design::field_label(&palette, self.localized("压缩包注释")))
                         .child(
                             crate::components::control_height(Input::new(&self.new_comment))
                                 .text_size(crate::theme::body())
@@ -3721,28 +3854,40 @@ impl MainView {
                                 .text_size(crate::theme::caption())
                                 .text_color(palette.muted)
                                 .child(if comment_value.is_empty() {
-                                    "注释写入 ZIP 中央目录，可留空".to_string()
+                                    self.localized("注释写入 ZIP 中央目录，可留空").to_string()
                                 } else {
-                                    format!("当前 {} 个字符", comment_value.chars().count())
+                                    crate::i18n::tr_fmt(
+                                        self.language,
+                                        "当前 {} 个字符",
+                                        &[&comment_value.chars().count()],
+                                    )
                                 }),
                         );
                 }
                 ArchiveFormat::SevenZ => {
                     card = card
-                        .child(design::field_label(&palette, "压缩方法"))
-                        .child(crate::components::chip("LZMA2 · 固实块", &palette))
-                        .child(design::field_label(&palette, "加密算法"))
+                        .child(design::field_label(&palette, self.localized("压缩方法")))
                         .child(crate::components::chip(
-                            "AES-256 + 文件名加密（设置密码后启用）",
+                            self.localized("LZMA2 · 固实块"),
                             &palette,
                         ))
-                        .child(design::field_label(&palette, "CPU 线程数"))
-                        .child(crate::components::chip("自动（引擎默认）", &palette))
+                        .child(design::field_label(&palette, self.localized("加密算法")))
+                        .child(crate::components::chip(
+                            self.localized("AES-256 + 文件名加密（设置密码后启用）"),
+                            &palette,
+                        ))
+                        .child(design::field_label(&palette, self.localized("CPU 线程数")))
+                        .child(crate::components::chip(
+                            self.localized("自动（引擎默认）"),
+                            &palette,
+                        ))
                         .child(
                             div()
                                 .text_size(crate::theme::caption())
                                 .text_color(palette.muted)
-                                .child("7Z 使用 LZMA2 固实压缩；头加密随密码启用。"),
+                                .child(
+                                    self.localized("7Z 使用 LZMA2 固实压缩；头加密随密码启用。"),
+                                ),
                         );
                 }
                 ArchiveFormat::Tar => {
@@ -3750,7 +3895,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.muted)
-                            .child("TAR 仅打包不压缩；修改时间与权限由引擎保留。"),
+                            .child(self.localized("TAR 仅打包不压缩；修改时间与权限由引擎保留。")),
                     );
                 }
                 ArchiveFormat::TarGz => {
@@ -3758,7 +3903,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.muted)
-                            .child("TAR.GZ 使用 gzip 单流压缩；不支持密码与注释。"),
+                            .child(self.localized("TAR.GZ 使用 gzip 单流压缩；不支持密码与注释。")),
                     );
                 }
                 ArchiveFormat::Lzh => {
@@ -3766,7 +3911,9 @@ impl MainView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.muted)
-                            .child("LZH 使用 LH5 压缩（级别 0 为仅存储）；不支持密码与注释。"),
+                            .child(self.localized(
+                                "LZH 使用 LH5 压缩（级别 0 为仅存储）；不支持密码与注释。",
+                            )),
                     );
                 }
                 ArchiveFormat::Iso => {
@@ -3774,23 +3921,28 @@ impl MainView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.muted)
-                            .child("ISO 使用 Joliet 保留中文/长文件名；仅存储，不支持密码。"),
+                            .child(self.localized(
+                                "ISO 使用 Joliet 保留中文/长文件名；仅存储，不支持密码。",
+                            )),
                     );
                 }
                 ArchiveFormat::Zpaq => {
-                    card = card.child(
-                        div()
-                            .text_size(crate::theme::caption())
-                            .text_color(palette.muted)
-                            .child("ZPAQ 使用 JIDAC 归档（级别 0–5）；不支持密码与注释。"),
-                    );
+                    card =
+                        card.child(
+                            div()
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.muted)
+                                .child(self.localized(
+                                    "ZPAQ 使用 JIDAC 归档（级别 0–5）；不支持密码与注释。",
+                                )),
+                        );
                 }
                 _ => {
                     card = card.child(
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.muted)
-                            .child("当前格式为单文件流压缩，无附加高级选项。"),
+                            .child(self.localized("当前格式为单文件流压缩，无附加高级选项。")),
                     );
                 }
             }
@@ -3806,9 +3958,9 @@ impl MainView {
         let advanced_toggle = design::link_action(
             "new-advanced-toggle",
             if advanced_open {
-                "收起选项"
+                self.localized("收起选项")
             } else {
-                "更多选项"
+                self.localized("更多选项")
             },
             &palette,
             cx.listener(|this, _, window, cx| {
@@ -3828,7 +3980,7 @@ impl MainView {
                     .text_size(crate::theme::body())
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.text)
-                    .child("预估结果"),
+                    .child(self.localized("预估结果")),
             )
             .child(
                 div()
@@ -3845,7 +3997,7 @@ impl MainView {
             .when(self.feature_window.is_some(), |this| {
                 this.child(
                     Button::new("new-cancel")
-                        .label("取消")
+                        .label(self.localized("取消"))
                         .outline()
                         .h(px(36.0))
                         .px(px(16.0))
@@ -3858,7 +4010,7 @@ impl MainView {
             .child(
                 div().debug_selector(|| "new-create".to_string()).child(
                     Button::new("new-create")
-                        .label("开始压缩")
+                        .label(self.localized("开始压缩"))
                         .icon(icon(IconName::Play, palette.accent_text, 15.0))
                         .primary()
                         .h(px(36.0))

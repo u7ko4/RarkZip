@@ -7,6 +7,10 @@ use crate::design;
 use crate::theme::{Palette, ThemeMode};
 
 impl MainView {
+    pub(crate) fn localized(&self, text: &'static str) -> &'static str {
+        crate::i18n::tr(self.language, text)
+    }
+
     pub(crate) fn render_settings(
         &mut self,
         _window: &mut Window,
@@ -35,11 +39,11 @@ impl MainView {
                     .text_color(palette.muted)
                     .child(crate::i18n::tr(self.language, "设置")),
             );
-        for item in SettingsPage::NAV_ORDER {
+        for (index, item) in SettingsPage::NAV_ORDER.into_iter().enumerate() {
             let selected = item == page;
             nav = nav.child(
                 div()
-                    .id(item.label(self.language))
+                    .id(format!("settings-nav-{index}"))
                     .role(Role::Button)
                     .aria_label(item.label(self.language))
                     .h(px(36.0))
@@ -104,6 +108,7 @@ impl MainView {
 
         let done = design::done_button(
             &palette,
+            self.language,
             cx.listener(|this, _, _, cx| {
                 this.page = Page::Main;
                 cx.notify();
@@ -117,12 +122,16 @@ impl MainView {
                 .gap(px(12.0))
                 .child(design::link_action(
                     "assoc-open-settings",
-                    "Windows - 设置默认程序",
+                    self.localized("Windows - 设置默认程序"),
                     &palette,
                     cx.listener(|this, _, _, cx| {
                         if let Err(error) = open::that("ms-settings:defaultapps") {
                             this.show_toast(
-                                format!("无法打开系统设置：{error}"),
+                                crate::i18n::tr_fmt(
+                                    this.language,
+                                    "无法打开系统设置：{}",
+                                    &[&error],
+                                ),
                                 ToastKind::Error,
                                 cx,
                             );
@@ -180,13 +189,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-esc-close",
-                    "Esc 关闭窗口",
+                    self.localized("Esc 关闭窗口"),
                     esc,
                     |settings, value| settings.general.esc_closes_window = value,
                     cx,
                 ),
-                "Esc 关闭窗口",
-                "按下 Esc 直接关闭当前窗口",
+                self.localized("Esc 关闭窗口"),
+                self.localized("按下 Esc 直接关闭当前窗口"),
                 None,
             ))
             .child(design::option_row(
@@ -194,13 +203,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-grid-lines",
-                    "文件列表显示网格线",
+                    self.localized("文件列表显示网格线"),
                     grid,
                     |settings, value| settings.general.show_grid_lines = value,
                     cx,
                 ),
-                "文件列表显示网格线",
-                "在条目之间绘制分隔线",
+                self.localized("文件列表显示网格线"),
+                self.localized("在条目之间绘制分隔线"),
                 None,
             ))
             .child(design::option_row(
@@ -208,13 +217,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-history",
-                    "记住最近打开文件",
+                    self.localized("记住最近打开文件"),
                     history,
                     |settings, value| settings.advanced.history = value,
                     cx,
                 ),
-                "记住最近打开文件",
-                "在开始页下拉菜单中显示最近打开的文件（最多 5 个）",
+                self.localized("记住最近打开文件"),
+                self.localized("在开始页下拉菜单中显示最近打开的文件（最多 5 个）"),
                 None,
             ))
             .child(design::option_row(
@@ -222,13 +231,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-single-click",
-                    "单击打开文件",
+                    self.localized("单击打开文件"),
                     single_click,
                     |settings, value| settings.general.single_click_open = value,
                     cx,
                 ),
-                "单击打开文件",
-                "关闭时使用双击打开，避免误触",
+                self.localized("单击打开文件"),
+                self.localized("关闭时使用双击打开，避免误触"),
                 None,
             ))
             .child(design::option_row(
@@ -236,25 +245,25 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-full-row",
-                    "整行选中",
+                    self.localized("整行选中"),
                     full_row,
                     |settings, value| settings.general.full_row_select = value,
                     cx,
                 ),
-                "整行选中",
-                "点击行内任意位置选中条目",
+                self.localized("整行选中"),
+                self.localized("点击行内任意位置选中条目"),
                 None,
             ))
             .child(design::option_row(
                 &palette,
                 true,
                 div().w(px(18.0)).flex_none().into_any_element(),
-                "工具栏按钮",
-                "隐藏不常用的按钮，保留核心工作流",
+                self.localized("工具栏按钮"),
+                self.localized("隐藏不常用的按钮，保留核心工作流"),
                 Some(
                     design::secondary_icon_action(
                         "settings-toolbar-buttons",
-                        "工具栏按钮…",
+                        self.localized("工具栏按钮…"),
                         IconName::SlidersHorizontal,
                         palette.text,
                         cx.listener(|this, _, _, cx| {
@@ -290,15 +299,15 @@ impl MainView {
                 "settings-smart",
                 smart,
                 false,
-                "智能解压",
+                self.localized("智能解压"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.extraction.smart = !this.settings.extraction.smart;
                     this.save_settings();
                     cx.notify();
                 }),
             ),
-            "智能解压",
-            "无独立根目录时自动建同名文件夹",
+            self.localized("智能解压"),
+            self.localized("无独立根目录时自动建同名文件夹"),
             None,
         );
         let parallel_row = design::option_row(
@@ -309,15 +318,15 @@ impl MainView {
                 "settings-parallel",
                 parallel,
                 false,
-                "并行解压",
+                self.localized("并行解压"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.extraction.parallel = !this.settings.extraction.parallel;
                     this.save_settings();
                     cx.notify();
                 }),
             ),
-            "并行解压",
-            "多核同时处理多个压缩包",
+            self.localized("并行解压"),
+            self.localized("多核同时处理多个压缩包"),
             None,
         );
         let nested_row = design::option_row(
@@ -328,7 +337,7 @@ impl MainView {
                 "settings-nested",
                 nested,
                 false,
-                "递归展开嵌套压缩包",
+                self.localized("递归展开嵌套压缩包"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.extraction.nested_enabled =
                         !this.settings.extraction.nested_enabled;
@@ -336,8 +345,8 @@ impl MainView {
                     cx.notify();
                 }),
             ),
-            "递归展开嵌套压缩包",
-            "解压结果中的压缩包继续自动展开",
+            self.localized("递归展开嵌套压缩包"),
+            self.localized("解压结果中的压缩包继续自动展开"),
             None,
         );
         let toggle_card = design::setting_card(&palette)
@@ -374,7 +383,7 @@ impl MainView {
         );
         let codepage_control = self.setting_select(
             "settings-codepage",
-            codepage.label().to_string(),
+            self.localized(codepage.label()).to_string(),
             170.0,
             DropdownKind::SettingsCodepage,
             cx,
@@ -392,19 +401,19 @@ impl MainView {
                     .child(design::field_row(
                         &palette,
                         false,
-                        "嵌套展开深度",
+                        self.localized("嵌套展开深度"),
                         depth_stepper,
                     ))
                     .child(design::field_row(
                         &palette,
                         false,
-                        "解压内存上限",
+                        self.localized("解压内存上限"),
                         memory_control,
                     ))
                     .child(design::field_row(
                         &palette,
                         true,
-                        "文件名代码页",
+                        self.localized("文件名代码页"),
                         codepage_control,
                     )),
             )
@@ -422,7 +431,7 @@ impl MainView {
 
         let level_control = self.setting_select(
             "settings-default-level",
-            format!("{level} · {}", level_label(level)),
+            format!("{level} · {}", self.localized(level_label(level))),
             150.0,
             DropdownKind::SettingsLevel,
             cx,
@@ -443,13 +452,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-include-root",
-                    "包含顶层文件夹",
+                    self.localized("包含顶层文件夹"),
                     include_root,
                     |settings, value| settings.compression.include_root = value,
                     cx,
                 ),
-                "包含顶层文件夹",
-                "压缩时保留所选目录本身",
+                self.localized("包含顶层文件夹"),
+                self.localized("压缩时保留所选目录本身"),
                 None,
             ))
             .child(design::option_row(
@@ -457,13 +466,13 @@ impl MainView {
                 true,
                 self.setting_check_box(
                     "settings-test-after",
-                    "压缩完成后自动测试",
+                    self.localized("压缩完成后自动测试"),
                     test_after,
                     |settings, value| settings.compression.test_after = value,
                     cx,
                 ),
-                "压缩完成后自动测试",
-                "创建后逐条校验 CRC",
+                self.localized("压缩完成后自动测试"),
+                self.localized("创建后逐条校验 CRC"),
                 None,
             ));
 
@@ -473,13 +482,13 @@ impl MainView {
             .child(design::field_row(
                 &palette,
                 false,
-                "默认压缩级别",
+                self.localized("默认压缩级别"),
                 level_control,
             ))
             .child(design::field_row(
                 &palette,
                 false,
-                "默认格式",
+                self.localized("默认格式"),
                 format_control,
             ))
             .child(
@@ -493,10 +502,13 @@ impl MainView {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(design::field_label(&palette, "默认排除规则"))
+                            .child(design::field_label(
+                                &palette,
+                                self.localized("默认排除规则"),
+                            ))
                             .child(design::link_action(
                                 "settings-exclude-reset",
-                                "重置",
+                                self.localized("重置"),
                                 &palette,
                                 cx.listener(|this, _, window, cx| {
                                     let default = rarkzip_engine::settings::DEFAULT_EXCLUDE;
@@ -518,7 +530,9 @@ impl MainView {
                         div()
                             .text_size(crate::theme::font_px(12.0))
                             .text_color(palette.muted)
-                            .child("支持 ; 或 , 分隔多个规则；新建压缩时可逐次覆盖。"),
+                            .child(
+                                self.localized("支持 ; 或 , 分隔多个规则；新建压缩时可逐次覆盖。"),
+                            ),
                     ),
             );
 
@@ -666,7 +680,7 @@ impl MainView {
                     .ml(px(6.0))
                     .text_size(px(font_size))
                     .text_color(palette.text)
-                    .child("Aa 示例"),
+                    .child(self.localized("Aa 示例")),
             )
             .into_any_element();
 
@@ -679,13 +693,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-custom-titlebar",
-                    "使用自定义标题栏",
+                    self.localized("使用自定义标题栏"),
                     custom_titlebar,
                     |settings, value| settings.view.use_custom_titlebar = value,
                     cx,
                 ),
-                "使用自定义标题栏",
-                "关闭后使用系统标题栏；新窗口立即生效，当前窗口重启后生效",
+                self.localized("使用自定义标题栏"),
+                self.localized("关闭后使用系统标题栏；新窗口立即生效，当前窗口重启后生效"),
                 None,
             ))
             .child(design::option_row(
@@ -693,13 +707,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-preview",
-                    "显示图像预览面板",
+                    self.localized("显示图像预览面板"),
                     preview,
                     |settings, value| settings.view.preview_enabled = value,
                     cx,
                 ),
-                "显示图像预览面板",
-                "在右侧显示选中图像的预览",
+                self.localized("显示图像预览面板"),
+                self.localized("在右侧显示选中图像的预览"),
                 None,
             ))
             .child(design::option_row(
@@ -707,13 +721,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-tree",
-                    "显示树形导航",
+                    self.localized("显示树形导航"),
                     tree,
                     |settings, value| settings.view.show_tree = value,
                     cx,
                 ),
-                "显示树形导航",
-                "显示左侧目录树导航",
+                self.localized("显示树形导航"),
+                self.localized("显示左侧目录树导航"),
                 None,
             ))
             .child(design::option_row(
@@ -721,13 +735,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-comment",
-                    "显示注释面板",
+                    self.localized("显示注释面板"),
                     comment,
                     |settings, value| settings.view.show_comment = value,
                     cx,
                 ),
-                "显示注释面板",
-                "显示归档注释面板",
+                self.localized("显示注释面板"),
+                self.localized("显示归档注释面板"),
                 None,
             ))
             .child(design::option_row(
@@ -735,13 +749,13 @@ impl MainView {
                 true,
                 self.setting_check_box(
                     "settings-status",
-                    "显示状态栏",
+                    self.localized("显示状态栏"),
                     status,
                     |settings, value| settings.view.show_status = value,
                     cx,
                 ),
-                "显示状态栏",
-                "显示底部状态栏",
+                self.localized("显示状态栏"),
+                self.localized("显示底部状态栏"),
                 None,
             ));
 
@@ -799,7 +813,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::font_px(12.5))
                             .text_color(palette.muted)
-                            .child("选择显示列、调整列宽与顺序"),
+                            .child(self.localized("选择显示列、调整列宽与顺序")),
                     ),
             )
             .child(design::secondary_icon_action(
@@ -834,13 +848,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-motw",
-                    "解压时传播 Mark-of-the-Web（网络来源标记）",
+                    self.localized("解压时传播 Mark-of-the-Web（网络来源标记）"),
                     motw,
                     |settings, value| settings.security.propagate_motw = value,
                     cx,
                 ),
-                "传播 Mark-of-the-Web",
-                "将网络来源标记写入解压后的文件",
+                self.localized("传播 Mark-of-the-Web"),
+                self.localized("将网络来源标记写入解压后的文件"),
                 None,
             ))
             .child(design::option_row(
@@ -848,19 +862,19 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-amsi",
-                    "使用 AMSI 扫描解压内容",
+                    self.localized("使用 AMSI 扫描解压内容"),
                     scan,
                     |settings, value| settings.security.amsi_scan = value,
                     cx,
                 ),
-                "使用 AMSI 扫描解压内容",
-                "解压后调用 Windows AMSI 检测恶意内容",
+                self.localized("使用 AMSI 扫描解压内容"),
+                self.localized("解压后调用 Windows AMSI 检测恶意内容"),
                 None,
             ))
             .child(design::field_row(
                 &palette,
                 true,
-                "扫描缓冲区",
+                self.localized("扫描缓冲区"),
                 chip(format!("{buffer} KB"), &palette).into_any_element(),
             ));
 
@@ -877,7 +891,7 @@ impl MainView {
             .text_size(crate::theme::font_px(12.5))
             .text_color(palette.muted)
             .child(icon(IconName::Lock, palette.accent, 15.0))
-            .child("密码本使用 Windows DPAPI 加密保存，仅当前用户可解密。");
+            .child(self.localized("密码本使用 Windows DPAPI 加密保存，仅当前用户可解密。"));
 
         div()
             .flex()
@@ -910,13 +924,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-recycle",
-                    "删除文件时移入回收站",
+                    self.localized("删除文件时移入回收站"),
                     recycle,
                     |settings, value| settings.advanced.recycle_bin = value,
                     cx,
                 ),
-                "删除文件时移入回收站",
-                "避免误删后无法恢复",
+                self.localized("删除文件时移入回收站"),
+                self.localized("避免误删后无法恢复"),
                 None,
             ))
             .child(design::option_row(
@@ -924,13 +938,13 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-history-advanced",
-                    "记住最近打开文件",
+                    self.localized("记住最近打开文件"),
                     history,
                     |settings, value| settings.advanced.history = value,
                     cx,
                 ),
-                "记住最近打开文件",
-                "在开始页下拉菜单中显示最近打开的文件（最多 5 个）",
+                self.localized("记住最近打开文件"),
+                self.localized("在开始页下拉菜单中显示最近打开的文件（最多 5 个）"),
                 None,
             ))
             .child(design::option_row(
@@ -938,16 +952,16 @@ impl MainView {
                 false,
                 self.setting_check_box(
                     "settings-long-paths",
-                    "启用 Windows 长路径",
+                    self.localized("启用 Windows 长路径"),
                     long_paths,
                     |settings, value| settings.advanced.long_paths = value,
                     cx,
                 ),
-                "启用 Windows 长路径",
-                "支持超过 260 字符的深层目录",
+                self.localized("启用 Windows 长路径"),
+                self.localized("支持超过 260 字符的深层目录"),
                 Some(design::tag(
                     &palette,
-                    "已默认开启",
+                    self.localized("已默认开启"),
                     design::TagTone::Neutral,
                 )),
             ))
@@ -956,13 +970,13 @@ impl MainView {
                 true,
                 self.setting_check_box(
                     "settings-preallocate",
-                    "解压前预分配磁盘空间",
+                    self.localized("解压前预分配磁盘空间"),
                     preallocate,
                     |settings, value| settings.advanced.preallocate = value,
                     cx,
                 ),
-                "解压前预分配磁盘空间",
-                "减少磁盘碎片",
+                self.localized("解压前预分配磁盘空间"),
+                self.localized("减少磁盘碎片"),
                 None,
             ));
 
@@ -982,7 +996,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::font_px(13.5))
                             .text_color(palette.sub)
-                            .child("临时文件目录"),
+                            .child(self.localized("临时文件目录")),
                     )
                     .child(
                         div()
@@ -1005,7 +1019,7 @@ impl MainView {
                         div()
                             .text_size(crate::theme::font_px(13.5))
                             .text_color(palette.sub)
-                            .child("配置与密码本目录"),
+                            .child(self.localized("配置与密码本目录")),
                     )
                     .child(
                         div()
@@ -1032,13 +1046,13 @@ impl MainView {
                         div()
                             .text_size(crate::theme::font_px(13.5))
                             .text_color(palette.text)
-                            .child("设置文件"),
+                            .child(self.localized("设置文件")),
                     )
                     .child(
                         div()
                             .text_size(crate::theme::font_px(12.5))
                             .text_color(palette.muted)
-                            .child("导出备份或从文件恢复全部设置"),
+                            .child(self.localized("导出备份或从文件恢复全部设置")),
                     ),
             )
             .child(
@@ -1048,7 +1062,7 @@ impl MainView {
                     .gap(px(10.0))
                     .child(design::secondary_icon_action(
                         "settings-export",
-                        "导出设置",
+                        self.localized("导出设置"),
                         IconName::Upload,
                         palette.text,
                         cx.listener(|this, _, window, cx| {
@@ -1057,7 +1071,7 @@ impl MainView {
                     ))
                     .child(design::secondary_icon_action(
                         "settings-import",
-                        "导入设置",
+                        self.localized("导入设置"),
                         IconName::Download,
                         palette.text,
                         cx.listener(|this, _, window, cx| {
@@ -1195,7 +1209,11 @@ impl MainView {
             return;
         }
         if let Err(error) = rarkzip_shell::install(&self.shell_options()) {
-            self.show_toast(format!("更新右键菜单失败：{error}"), ToastKind::Error, cx);
+            self.show_toast(
+                crate::i18n::tr_fmt(self.language, "更新右键菜单失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            );
         }
     }
 
@@ -1228,7 +1246,11 @@ impl MainView {
         }
         if failed > 0 {
             self.show_toast(
-                format!("有 {failed} 个文件关联的双击动作更新失败"),
+                crate::i18n::tr_fmt(
+                    self.language,
+                    "有 {} 个文件关联的双击动作更新失败",
+                    &[&failed],
+                ),
                 ToastKind::Error,
                 cx,
             );
@@ -1272,7 +1294,11 @@ impl MainView {
             .collect();
         if let Some(position) = algorithms.iter().position(|item| *item == algorithm) {
             if algorithms.len() <= 1 {
-                self.show_toast("至少保留一个哈希算法", ToastKind::Info, cx);
+                self.show_toast(
+                    tr(self.language, "至少保留一个哈希算法"),
+                    ToastKind::Info,
+                    cx,
+                );
                 return;
             }
             algorithms.remove(position);
@@ -1284,6 +1310,7 @@ impl MainView {
 
     fn settings_hash(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
+        let language = self.language;
         let selected: Vec<HashAlgorithm> = self
             .settings
             .hash
@@ -1314,21 +1341,22 @@ impl MainView {
         }
         let algorithms_head = menu_group_head(
             &palette,
-            "算法",
-            "选中的算法将作为“文件哈希”窗口的列显示",
+            tr(language, "算法"),
+            tr(language, "选中的算法将作为“文件哈希”窗口的列显示"),
             vec![
                 div()
                     .text_size(crate::theme::font_px(12.0))
                     .text_color(palette.muted)
                     .child(format!(
-                        "已选 {} / {}",
+                        "{} {} / {}",
+                        tr(language, "已选"),
                         selected.len(),
                         HashAlgorithm::ALL.len()
                     ))
                     .into_any_element(),
                 design::link_action(
                     "hash-setting-all",
-                    "全选",
+                    tr(language, "全选"),
                     &palette,
                     cx.listener(|this, _, _, cx| {
                         this.set_hash_setting_algorithms(HashAlgorithm::ALL.to_vec(), cx);
@@ -1336,7 +1364,7 @@ impl MainView {
                 ),
                 design::link_action(
                     "hash-setting-default",
-                    "默认",
+                    tr(language, "默认"),
                     &palette,
                     cx.listener(|this, _, _, cx| {
                         this.set_hash_setting_algorithms(
@@ -1359,7 +1387,7 @@ impl MainView {
                 &palette,
                 "hash-setting-uppercase",
                 uppercase_display,
-                "哈希显示为大写字母",
+                tr(language, "哈希显示为大写字母"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.hash.uppercase_display = !this.settings.hash.uppercase_display;
                     this.save_settings();
@@ -1370,7 +1398,7 @@ impl MainView {
                 &palette,
                 "hash-setting-monospace",
                 monospace,
-                "使用等宽字体显示哈希",
+                tr(language, "使用等宽字体显示哈希"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.hash.monospace = !this.settings.hash.monospace;
                     this.save_settings();
@@ -1378,7 +1406,12 @@ impl MainView {
                 }),
             ),
         ];
-        let display_head = menu_group_head(&palette, "显示", "哈希窗口中的呈现方式", Vec::new());
+        let display_head = menu_group_head(
+            &palette,
+            tr(language, "显示"),
+            tr(language, "哈希窗口中的呈现方式"),
+            Vec::new(),
+        );
         let display_card = design::card(&palette).child(menu_grid(&palette, display_rows, 2));
 
         let export_rows = vec![
@@ -1386,7 +1419,7 @@ impl MainView {
                 &palette,
                 "hash-setting-export-uppercase",
                 export_uppercase,
-                "哈希导出为大写字母",
+                tr(language, "哈希导出为大写字母"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.hash.export_uppercase = !this.settings.hash.export_uppercase;
                     this.save_settings();
@@ -1397,7 +1430,7 @@ impl MainView {
                 &palette,
                 "hash-setting-export-lf",
                 export_lf,
-                "使用 Unix 换行符（LF）",
+                tr(language, "使用 Unix 换行符（LF）"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.hash.export_lf = !this.settings.hash.export_lf;
                     this.save_settings();
@@ -1408,7 +1441,7 @@ impl MainView {
                 &palette,
                 "hash-setting-export-star",
                 export_star,
-                "使用空格加星号（*）分隔",
+                tr(language, "使用空格加星号（*）分隔"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.hash.export_star = !this.settings.hash.export_star;
                     this.save_settings();
@@ -1416,8 +1449,12 @@ impl MainView {
                 }),
             ),
         ];
-        let export_head =
-            menu_group_head(&palette, "校验和文件", "导出格式与文件内容行为", Vec::new());
+        let export_head = menu_group_head(
+            &palette,
+            tr(language, "校验和文件"),
+            tr(language, "导出格式与文件内容行为"),
+            Vec::new(),
+        );
         let export_card = design::card(&palette).child(menu_grid(&palette, export_rows, 2));
 
         let behavior_rows = vec![
@@ -1425,7 +1462,7 @@ impl MainView {
                 &palette,
                 "hash-setting-auto-start",
                 auto_start,
-                "打开文件哈希窗口后自动开始计算",
+                tr(language, "打开文件哈希窗口后自动开始计算"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.hash.auto_start = !this.settings.hash.auto_start;
                     this.save_settings();
@@ -1436,7 +1473,7 @@ impl MainView {
                 &palette,
                 "hash-setting-shell-menu",
                 shell_menu,
-                "在资源管理器中显示“计算文件哈希”",
+                tr(language, "在资源管理器中显示“计算文件哈希”"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.integration.hash_menu = !this.settings.integration.hash_menu;
                     this.save_settings();
@@ -1445,13 +1482,17 @@ impl MainView {
                 }),
             ),
         ];
-        let behavior_head =
-            menu_group_head(&palette, "行为", "自动计算与资源管理器集成", Vec::new());
+        let behavior_head = menu_group_head(
+            &palette,
+            tr(language, "行为"),
+            tr(language, "自动计算与资源管理器集成"),
+            Vec::new(),
+        );
         let behavior_card = design::card(&palette).child(menu_grid(&palette, behavior_rows, 2));
 
         let note = design::info_note(
             &palette,
-            "资源管理器菜单对单个或多个文件均有效；选择多个文件时会打开一个哈希窗口并载入全部文件。文件夹不会显示该菜单。",
+            tr(language, "资源管理器菜单对单个或多个文件均有效；选择多个文件时会打开一个哈希窗口并载入全部文件。文件夹不会显示该菜单。"),
         );
 
         div()
@@ -1521,22 +1562,26 @@ impl MainView {
                             .text_size(crate::theme::font_px(14.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
-                            .child("经典资源管理器菜单"),
+                            .child(self.localized("经典资源管理器菜单")),
                     )
                     .child(
                         div()
                             .text_size(crate::theme::font_px(12.5))
                             .text_color(palette.muted)
                             .child(if disabled {
-                                "右键菜单已禁用；文件关联仍然保留"
+                                self.localized("右键菜单已禁用；文件关联仍然保留")
                             } else {
-                                "写入 HKCU，无需管理员权限；更改即时生效"
+                                self.localized("写入 HKCU，无需管理员权限；更改即时生效")
                             }),
                     ),
             )
             .child(design::tag(
                 &palette,
-                if installed { "已注册" } else { "未注册" },
+                if installed {
+                    self.localized("已注册")
+                } else {
+                    self.localized("未注册")
+                },
                 if installed {
                     design::TagTone::Ok
                 } else {
@@ -1550,19 +1595,19 @@ impl MainView {
                     .gap(px(8.0))
                     .child(design::link_action(
                         "cm-refresh",
-                        "更新菜单",
+                        self.localized("更新菜单"),
                         &palette,
                         cx.listener(|this, _, _, cx| {
                             this.settings.integration.disable_menu = false;
                             this.save_settings();
                             match rarkzip_shell::install(&this.shell_options()) {
                                 Ok(()) => this.show_toast(
-                                    "右键菜单已更新为当前版本",
+                                    this.localized("右键菜单已更新为当前版本"),
                                     ToastKind::Success,
                                     cx,
                                 ),
                                 Err(error) => this.show_toast(
-                                    format!("更新失败：{error}"),
+                                    crate::i18n::tr_fmt(this.language, "更新失败：{}", &[&error]),
                                     ToastKind::Error,
                                     cx,
                                 ),
@@ -1572,18 +1617,18 @@ impl MainView {
                     ))
                     .child(design::secondary_action(
                         "cm-uninstall",
-                        "卸载",
+                        self.localized("卸载"),
                         cx.listener(|this, _, _, cx| {
                             this.settings.integration.disable_menu = true;
                             this.save_settings();
                             match rarkzip_shell::uninstall(rarkzip_shell::ShellScope::CurrentUser) {
                                 Ok(()) => this.show_toast(
-                                    "已移除 RarkZip 右键菜单",
+                                    this.localized("已移除 RarkZip 右键菜单"),
                                     ToastKind::Success,
                                     cx,
                                 ),
                                 Err(error) => this.show_toast(
-                                    format!("卸载失败：{error}"),
+                                    crate::i18n::tr_fmt(this.language, "卸载失败：{}", &[&error]),
                                     ToastKind::Error,
                                     cx,
                                 ),
@@ -1595,7 +1640,7 @@ impl MainView {
             } else {
                 design::primary_icon_action(
                     "cm-install",
-                    "注册右键菜单",
+                    self.localized("注册右键菜单"),
                     IconName::ShieldCheck,
                     &palette,
                     false,
@@ -1604,13 +1649,15 @@ impl MainView {
                         this.save_settings();
                         match rarkzip_shell::install(&this.shell_options()) {
                             Ok(()) => this.show_toast(
-                                "已注册 RarkZip 经典右键菜单",
+                                this.localized("已注册 RarkZip 经典右键菜单"),
                                 ToastKind::Success,
                                 cx,
                             ),
-                            Err(error) => {
-                                this.show_toast(format!("注册失败：{error}"), ToastKind::Error, cx)
-                            }
+                            Err(error) => this.show_toast(
+                                crate::i18n::tr_fmt(this.language, "注册失败：{}", &[&error]),
+                                ToastKind::Error,
+                                cx,
+                            ),
                         }
                         cx.notify();
                     }),
@@ -1625,8 +1672,8 @@ impl MainView {
                 &palette,
                 format!("cm-double-{key}"),
                 double_click == *key,
-                title,
-                description,
+                self.localized(title),
+                self.localized(description),
                 cx.listener(move |this, _, _, cx| {
                     this.settings.integration.double_click = key_owned.clone();
                     this.save_settings();
@@ -1660,14 +1707,14 @@ impl MainView {
                         palette.text
                     })
                     .child(if custom_folder.trim().is_empty() {
-                        "尚未选择目录".to_string()
+                        self.localized("尚未选择目录").to_string()
                     } else {
                         custom_folder.clone()
                     }),
             )
             .child(design::secondary_action(
                 "cm-folder",
-                "浏览…",
+                self.localized("浏览…"),
                 cx.listener(|this, _, _, cx| {
                     let Some(folder) =
                         crate::components::file_dialog(|| rfd::FileDialog::new().pick_folder())
@@ -1693,12 +1740,12 @@ impl MainView {
             .collect();
         let extract_head = menu_group_head(
             &palette,
-            "解压菜单",
-            "勾选后在压缩包的右键菜单中显示",
+            self.localized("解压菜单"),
+            self.localized("勾选后在压缩包的右键菜单中显示"),
             vec![
                 design::link_action(
                     "cm-extract-all",
-                    "全选",
+                    self.localized("全选"),
                     &palette,
                     cx.listener(move |this, _, _, cx| {
                         this.settings.integration.extract_verbs = extract_all.clone();
@@ -1709,7 +1756,7 @@ impl MainView {
                 ),
                 design::link_action(
                     "cm-extract-none",
-                    "清空",
+                    self.localized("清空"),
                     &palette,
                     cx.listener(|this, _, _, cx| {
                         this.settings.integration.extract_verbs.clear();
@@ -1728,7 +1775,7 @@ impl MainView {
                 &palette,
                 format!("cm-extract-{key}"),
                 checked,
-                title,
+                self.localized(title),
                 cx.listener(move |this, _, _, cx| {
                     let position = this
                         .settings
@@ -1754,37 +1801,49 @@ impl MainView {
             &palette,
             "cm-extract-preview",
             preview_installed,
-            "预览压缩文件",
+            self.localized("预览压缩文件"),
             cx.listener(|this, _, _, cx| {
                 if rarkzip_shell::preview_handler_installed() {
                     match rarkzip_shell::unregister_preview_handler() {
-                        Ok(()) => this.show_toast("已卸载预览处理器", ToastKind::Success, cx),
-                        Err(error) => {
-                            this.show_toast(format!("卸载失败：{error}"), ToastKind::Error, cx)
-                        }
+                        Ok(()) => this.show_toast(
+                            this.localized("已卸载预览处理器"),
+                            ToastKind::Success,
+                            cx,
+                        ),
+                        Err(error) => this.show_toast(
+                            crate::i18n::tr_fmt(this.language, "卸载失败：{}", &[&error]),
+                            ToastKind::Error,
+                            cx,
+                        ),
                     }
                 } else {
                     let dll = std::env::current_exe().ok().and_then(|exe| {
                         exe.parent().map(|parent| parent.join("rarkzip_shell.dll"))
                     });
                     let Some(dll) = dll else {
-                        this.show_toast("无法定位程序目录", ToastKind::Error, cx);
+                        this.show_toast(this.localized("无法定位程序目录"), ToastKind::Error, cx);
                         return;
                     };
                     if !dll.is_file() {
                         this.show_toast(
-                            format!("找不到预览处理器 DLL：{}", dll.display()),
+                            crate::i18n::tr_fmt(
+                                this.language,
+                                "找不到预览处理器 DLL：{}",
+                                &[&dll.display()],
+                            ),
                             ToastKind::Error,
                             cx,
                         );
                         return;
                     }
                     match rarkzip_shell::register_preview_handler(&dll) {
-                        Ok(()) => {
-                            this.show_toast("已注册 RarkZip 预览处理器", ToastKind::Success, cx)
-                        }
+                        Ok(()) => this.show_toast(
+                            this.localized("已注册 RarkZip 预览处理器"),
+                            ToastKind::Success,
+                            cx,
+                        ),
                         Err(error) => this.show_toast(
-                            format!("注册预览处理器失败：{error}"),
+                            crate::i18n::tr_fmt(this.language, "注册预览处理器失败：{}", &[&error]),
                             ToastKind::Error,
                             cx,
                         ),
@@ -1797,7 +1856,7 @@ impl MainView {
             &palette,
             "cm-extract-any",
             extract_any_file,
-            "在任意文件类型上显示（含无扩展名）",
+            self.localized("在任意文件类型上显示（含无扩展名）"),
             cx.listener(|this, _, _, cx| {
                 this.settings.integration.extract_any_file =
                     !this.settings.integration.extract_any_file;
@@ -1817,12 +1876,12 @@ impl MainView {
             .collect();
         let compress_head = menu_group_head(
             &palette,
-            "压缩菜单",
-            "勾选后在文件 / 文件夹的右键菜单中显示",
+            self.localized("压缩菜单"),
+            self.localized("勾选后在文件 / 文件夹的右键菜单中显示"),
             vec![
                 design::link_action(
                     "cm-compress-all",
-                    "全选",
+                    self.localized("全选"),
                     &palette,
                     cx.listener(move |this, _, _, cx| {
                         this.settings.integration.compress_verbs = compress_all.clone();
@@ -1833,7 +1892,7 @@ impl MainView {
                 ),
                 design::link_action(
                     "cm-compress-none",
-                    "清空",
+                    self.localized("清空"),
                     &palette,
                     cx.listener(|this, _, _, cx| {
                         this.settings.integration.compress_verbs.clear();
@@ -1852,7 +1911,7 @@ impl MainView {
                 &palette,
                 format!("cm-compress-{key}"),
                 checked,
-                title,
+                self.localized(title),
                 cx.listener(move |this, _, _, cx| {
                     let position = this
                         .settings
@@ -1878,8 +1937,8 @@ impl MainView {
 
         let empty_head = menu_group_head(
             &palette,
-            "空白处右键菜单",
-            "在资源管理器空白处单击右键时显示",
+            self.localized("空白处右键菜单"),
+            self.localized("在资源管理器空白处单击右键时显示"),
             Vec::new(),
         );
         let mut empty_rows = Vec::new();
@@ -1890,7 +1949,7 @@ impl MainView {
                 &palette,
                 format!("cm-empty-{key}"),
                 checked,
-                title,
+                self.localized(title),
                 cx.listener(move |this, _, _, cx| {
                     let position = this
                         .settings
@@ -1914,13 +1973,18 @@ impl MainView {
         }
         let empty_card = design::card(&palette).child(menu_grid(&palette, empty_rows, 1));
 
-        let other_head = menu_group_head(&palette, "其它", "菜单的整体行为", Vec::new());
+        let other_head = menu_group_head(
+            &palette,
+            self.localized("其它"),
+            self.localized("菜单的整体行为"),
+            Vec::new(),
+        );
         let other_rows = vec![
             menu_check_row(
                 &palette,
                 "cm-disable",
                 disabled,
-                "禁用右键菜单",
+                self.localized("禁用右键菜单"),
                 cx.listener(|this, _, _, cx| {
                     let next = !this.settings.integration.disable_menu;
                     this.settings.integration.disable_menu = next;
@@ -1933,16 +1997,18 @@ impl MainView {
                     match result {
                         Ok(()) => this.show_toast(
                             if next {
-                                "已禁用 RarkZip 右键菜单"
+                                this.localized("已禁用 RarkZip 右键菜单")
                             } else {
-                                "已重新注册 RarkZip 右键菜单"
+                                this.localized("已重新注册 RarkZip 右键菜单")
                             },
                             ToastKind::Success,
                             cx,
                         ),
-                        Err(error) => {
-                            this.show_toast(format!("操作失败：{error}"), ToastKind::Error, cx)
-                        }
+                        Err(error) => this.show_toast(
+                            crate::i18n::tr_fmt(this.language, "操作失败：{}", &[&error]),
+                            ToastKind::Error,
+                            cx,
+                        ),
                     }
                     cx.notify();
                 }),
@@ -1951,7 +2017,7 @@ impl MainView {
                 &palette,
                 "cm-cascade",
                 cascade,
-                "层叠右键菜单",
+                self.localized("层叠右键菜单"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.integration.cascade = !this.settings.integration.cascade;
                     this.save_settings();
@@ -1963,7 +2029,7 @@ impl MainView {
                 &palette,
                 "cm-hide-icon",
                 hide_icon,
-                "隐藏 RarkZip 图标",
+                self.localized("隐藏 RarkZip 图标"),
                 cx.listener(|this, _, _, cx| {
                     this.settings.integration.hide_icon = !this.settings.integration.hide_icon;
                     this.save_settings();
@@ -1976,7 +2042,7 @@ impl MainView {
 
         let preview_note = design::info_note(
             &palette,
-            "预览处理器需要 rarkzip_shell.dll 与 rarkzip.exe 放在同一目录。",
+            self.localized("预览处理器需要 rarkzip_shell.dll 与 rarkzip.exe 放在同一目录。"),
         );
 
         div()
@@ -1985,8 +2051,8 @@ impl MainView {
             .child(status_card)
             .child(menu_group_head(
                 &palette,
-                "双击动作",
-                "在资源管理器中双击压缩包时执行的操作",
+                self.localized("双击动作"),
+                self.localized("在资源管理器中双击压缩包时执行的操作"),
                 Vec::new(),
             ))
             .child(double_card)
@@ -2072,13 +2138,17 @@ impl MainView {
                                     .text_size(crate::theme::font_px(13.5))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(palette.text)
-                                    .child(*name),
+                                    .child(self.localized(name)),
                             )
                             .child(
                                 div()
                                     .text_size(crate::theme::font_px(12.0))
                                     .text_color(palette.muted)
-                                    .child(format!("{group_count} 种")),
+                                    .child(crate::i18n::tr_fmt(
+                                        self.language,
+                                        "{} 种",
+                                        &[&group_count],
+                                    )),
                             )
                             .child(div().flex_1())
                             .child(
@@ -2088,7 +2158,7 @@ impl MainView {
                                     .gap(px(2.0))
                                     .child(design::link_action(
                                         format!("assoc-all-{index}"),
-                                        "全选",
+                                        self.localized("全选"),
                                         &palette,
                                         cx.listener(move |this, _, _, cx| {
                                             for extension in &select_extensions {
@@ -2111,7 +2181,7 @@ impl MainView {
                                     ))
                                     .child(design::link_action(
                                         format!("assoc-none-{index}"),
-                                        "清空",
+                                        self.localized("清空"),
                                         &palette,
                                         cx.listener(move |this, _, _, cx| {
                                             this.settings.integration.associations.retain(|item| {
@@ -2168,7 +2238,7 @@ impl MainView {
             .text_size(crate::theme::font_px(12.5))
             .text_color(palette.muted)
             .child(icon(IconName::Info, palette.muted, 14.0))
-            .child("注册的是「打开方式」候选，不强制覆盖 Windows 用户默认选择；被接管的格式关联后会自动切换为 RarkZip。");
+            .child(self.localized("注册的是「打开方式」候选，不强制覆盖 Windows 用户默认选择；被接管的格式关联后会自动切换为 RarkZip。"));
 
         let count = div()
             .flex()
@@ -2182,7 +2252,10 @@ impl MainView {
                     .text_color(palette.accent)
                     .child(selected_count.to_string()),
             )
-            .child(format!("/ {total_count} 种格式已选"))
+            .child(format!(
+                "/ {}",
+                crate::i18n::tr_fmt(self.language, "{} 种格式已选", &[&total_count])
+            ))
             .when(other_count > 0, |this| {
                 this.child(
                     div()
@@ -2196,13 +2269,17 @@ impl MainView {
                                 .rounded(px(99.0))
                                 .bg(Hsla::from(rgb(0xE8A13C))),
                         )
-                        .child(format!("{other_count} 种由其它程序接管")),
+                        .child(crate::i18n::tr_fmt(
+                            self.language,
+                            "{} 种由其它程序接管",
+                            &[&other_count],
+                        )),
                 )
             });
 
         let apply = design::primary_icon_action(
             "assoc-apply",
-            "立即应用",
+            self.localized("立即应用"),
             IconName::Check,
             &palette,
             false,
@@ -2237,16 +2314,20 @@ impl MainView {
                 }
                 if errors.is_empty() {
                     this.show_toast(
-                        format!("已应用 {applied} 种格式的文件关联"),
+                        crate::i18n::tr_fmt(
+                            this.language,
+                            "已应用 {} 种格式的文件关联",
+                            &[&applied],
+                        ),
                         ToastKind::Success,
                         cx,
                     );
                 } else {
                     this.show_toast(
-                        format!(
+                        crate::i18n::tr_fmt(
+                            this.language,
                             "部分关联未应用（{} 项）：{}",
-                            errors.len(),
-                            errors.first().cloned().unwrap_or_default()
+                            &[&errors.len(), &errors.first().cloned().unwrap_or_default()],
                         ),
                         ToastKind::Error,
                         cx,
@@ -2272,7 +2353,7 @@ impl MainView {
                     .child(count)
                     .child(design::secondary_action(
                         "assoc-basic",
-                        "基础类型",
+                        self.localized("基础类型"),
                         cx.listener(|this, _, _, cx| {
                             this.settings.integration.associations = ASSOCIATION_GROUPS
                                 .iter()
@@ -2286,7 +2367,7 @@ impl MainView {
                     ))
                     .child(design::secondary_action(
                         "assoc-all",
-                        "全选",
+                        self.localized("全选"),
                         cx.listener(|this, _, _, cx| {
                             this.settings.integration.associations = all_association_extensions();
                             this.save_settings();
@@ -2295,7 +2376,7 @@ impl MainView {
                     ))
                     .child(design::secondary_action(
                         "assoc-none",
-                        "取消全选",
+                        self.localized("取消全选"),
                         cx.listener(|this, _, _, cx| {
                             this.settings.integration.associations.clear();
                             this.save_settings();
@@ -2757,79 +2838,25 @@ fn settings_page_icon(page: SettingsPage) -> IconName {
 }
 
 fn settings_page_subtitle(page: SettingsPage, language: Language) -> &'static str {
-    let english = language == Language::En;
-    match page {
-        SettingsPage::General => {
-            if english {
-                "Startup and list behavior; changes apply immediately"
-            } else {
-                "启动与列表行为，所有更改即时生效"
-            }
-        }
-        SettingsPage::Associations => {
-            if english {
-                "Choose RarkZip as an option for archives; Windows still decides the default app"
-            } else {
+    tr(
+        language,
+        match page {
+            SettingsPage::General => "启动与列表行为，所有更改即时生效",
+            SettingsPage::Associations => {
                 "选择 RarkZip 作为压缩包的默认打开方式；注册的是「打开方式」候选，不强制覆盖 Windows 用户默认选择"
             }
-        }
-        SettingsPage::ContextMenu => {
-            if english {
-                "Manage RarkZip entries and double-click behavior in Explorer; changes apply immediately"
-            } else {
+            SettingsPage::ContextMenu => {
                 "管理 Windows 资源管理器右键菜单中 RarkZip 的入口与双击行为，更改即时生效"
             }
-        }
-        SettingsPage::Extraction => {
-            if english {
-                "Control extraction behavior and resource usage; changes apply immediately"
-            } else {
-                "控制解压行为与资源占用，所有更改即时生效"
-            }
-        }
-        SettingsPage::Compression => {
-            if english {
-                "Default format, compression level and exclude rules"
-            } else {
-                "默认格式、压缩级别与排除规则"
-            }
-        }
-        SettingsPage::View => {
-            if english {
-                "Appearance, layout and list display"
-            } else {
-                "界面外观、布局与列表显示"
-            }
-        }
-        SettingsPage::Security => {
-            if english {
-                "Extraction safety and malicious content scanning"
-            } else {
-                "解压安全策略与恶意内容扫描"
-            }
-        }
-        SettingsPage::Advanced => {
-            if english {
-                "Temporary files, recycle bin and configuration import/export"
-            } else {
-                "临时目录、回收站与配置导入导出"
-            }
-        }
-        SettingsPage::Language => {
-            if english {
-                "Interface language and language packs"
-            } else {
-                "界面语言与语言包"
-            }
-        }
-        SettingsPage::Hash => {
-            if english {
-                "Algorithms, display and checksum export for file hashing"
-            } else {
-                "配置“计算文件哈希”的默认算法、显示方式与校验和导出"
-            }
-        }
-    }
+            SettingsPage::Extraction => "控制解压行为与资源占用，所有更改即时生效",
+            SettingsPage::Compression => "默认格式、压缩级别与排除规则",
+            SettingsPage::View => "界面外观、布局与列表显示",
+            SettingsPage::Security => "解压安全策略与恶意内容扫描",
+            SettingsPage::Advanced => "临时目录、回收站与配置导入导出",
+            SettingsPage::Language => "界面语言与语言包",
+            SettingsPage::Hash => "配置“计算文件哈希”的默认算法、显示方式与校验和导出",
+        },
+    )
 }
 
 fn memory_label(mb: u32) -> String {

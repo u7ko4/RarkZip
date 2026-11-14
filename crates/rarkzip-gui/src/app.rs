@@ -82,9 +82,11 @@ impl FeatureWindow {
 
     pub(crate) fn title_for(self, language: Language) -> &'static str {
         match self {
+            Self::NewArchive => crate::i18n::tr(language, "新建压缩文件"),
+            Self::PasswordRecovery => crate::i18n::tr(language, "密码恢复"),
+            Self::Hash => crate::i18n::tr(language, "文件哈希"),
             Self::Crypt => crate::i18n::tr(language, "文件与文本加密"),
             Self::Signature => crate::i18n::tr(language, "GnuPG 签名工具"),
-            _ => self.title(),
         }
     }
 
@@ -741,17 +743,18 @@ impl MainView {
             InputState::new(window, cx).placeholder(if language == Language::En {
                 "Search in archive…  Ctrl+F"
             } else {
-                "在压缩包内查找…  Ctrl+F"
+                tr(language, "在压缩包内查找…  Ctrl+F")
             })
         });
         let new_password = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .placeholder("可选密码")
+                .placeholder(tr(language, "可选密码"))
         });
-        let new_name = cx.new(|cx| InputState::new(window, cx).placeholder("归档名称"));
-        let new_comment =
-            cx.new(|cx| InputState::new(window, cx).placeholder("压缩包注释（可选）"));
+        let new_name =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr(language, "归档名称")));
+        let new_comment = cx
+            .new(|cx| InputState::new(window, cx).placeholder(tr(language, "压缩包注释（可选）")));
         let level_slider = cx.new(|_| {
             SliderState::new()
                 .min(0.0)
@@ -770,7 +773,7 @@ impl MainView {
         let password_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .placeholder("输入密码")
+                .placeholder(tr(language, "输入密码"))
         });
         let exclude_input = cx.new(|cx| {
             InputState::new(window, cx).default_value(settings.compression.exclude.clone())
@@ -781,19 +784,24 @@ impl MainView {
         let password_new = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .placeholder("输入新密码")
+                .placeholder(tr(language, "输入新密码"))
         });
-        let password_note = cx.new(|cx| InputState::new(window, cx).placeholder("备注（可选）"));
+        let password_note =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr(language, "备注（可选）")));
         let password_book = PasswordBook::load_default();
         let recovery_mask = cx.new(|cx| InputState::new(window, cx).default_value("?l?l?d?d"));
         let recovery_charset = cx.new(|cx| {
             InputState::new(window, cx).default_value("abcdefghijklmnopqrstuvwxyz0123456789")
         });
-        let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新条目路径"));
-        let comment_input = cx.new(|cx| InputState::new(window, cx).placeholder("压缩包注释"));
+        let rename_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr(language, "新条目路径")));
+        let comment_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr(language, "压缩包注释")));
         let hash_verify_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("粘贴期望的哈希值或校验和文件内容，自动匹配下方结果")
+            InputState::new(window, cx).placeholder(tr(
+                language,
+                "粘贴期望的哈希值或校验和文件内容，自动匹配下方结果",
+            ))
         });
         let hash_algorithms = hash_algorithms_from_settings(&settings);
 
@@ -1108,13 +1116,15 @@ impl MainView {
         while let Ok(event) = self.open_receiver.try_recv() {
             match event.result {
                 Ok(()) => self.show_toast(
-                    format!("已用系统程序打开：{}", event.name),
+                    crate::i18n::tr_fmt(self.language, "已用系统程序打开：{}", &[&event.name]),
                     ToastKind::Info,
                     cx,
                 ),
-                Err(error) => {
-                    self.show_toast(format!("打开文件失败：{error}"), ToastKind::Error, cx)
-                }
+                Err(error) => self.show_toast(
+                    crate::i18n::tr_fmt(self.language, "打开文件失败：{}", &[&error]),
+                    ToastKind::Error,
+                    cx,
+                ),
             }
             changed = true;
         }
@@ -1184,10 +1194,13 @@ impl MainView {
                 if cancelled || already_prompting {
                     let _ = responder.send(None);
                 } else {
+                    let waiting_phase = self.localized("等待输入").to_string();
+                    let retry_error = (prompt.attempt > 1)
+                        .then(|| self.localized("密码错误，请重试").to_string());
                     if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
                         // 不使用含“密码”的阶段名，避免任务卡片把等待中的
                         // 密码请求误当成后台自动试密。
-                        task.phase = "等待输入".to_string();
+                        task.phase = waiting_phase;
                         task.detail = prompt.message.clone();
                     }
                     self.modal = Some(Modal::Password {
@@ -1196,7 +1209,7 @@ impl MainView {
                             task_id: id,
                             responder,
                         },
-                        error: (prompt.attempt > 1).then(|| "密码错误，请重试".to_string()),
+                        error: retry_error,
                         message: Some(prompt.message.clone()),
                     });
                     self.password_picker_open = false;
@@ -1233,31 +1246,38 @@ impl MainView {
                 Ok(info) => {
                     self.set_task_completed(
                         id,
-                        format!(
+                        crate::i18n::tr_fmt(
+                            self.language,
                             "{} 项 · 原始 {}",
-                            info.file_count(),
-                            format_size(info.total_size())
+                            &[&info.file_count(), &format_size(info.total_size())],
                         ),
                     );
                     self.install_archive(path, info, password, cx);
                     self.page = Page::Main;
                 }
                 Err(error) if error.is_password_related() => {
-                    self.set_task_failed(id, "需要密码");
+                    self.set_task_failed(id, self.localized("需要密码"));
                     self.show_password_modal(path.clone(), PendingAction::Open { path }, None, cx);
                 }
                 Err(error) => {
                     self.set_task_failed(id, error.to_string());
-                    self.show_toast(format!("打开失败：{error}"), ToastKind::Error, cx);
+                    self.show_toast(
+                        crate::i18n::tr_fmt(self.language, "打开失败：{}", &[&error]),
+                        ToastKind::Error,
+                        cx,
+                    );
                 }
             },
             JobResult::Extract { path, result } => match result {
                 Ok(outcome) => {
-                    let detail = format!(
+                    let detail = crate::i18n::tr_fmt(
+                        self.language,
                         "{} 个文件 · {} · 嵌套 {} 个",
-                        outcome.files,
-                        format_size(outcome.bytes),
-                        outcome.nested_archives
+                        &[
+                            &outcome.files,
+                            &format_size(outcome.bytes),
+                            &outcome.nested_archives,
+                        ],
                     );
                     self.set_task_completed(id, detail);
                     if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
@@ -1267,7 +1287,11 @@ impl MainView {
                         let _ = open::that(&outcome.dest);
                     }
                     self.show_toast(
-                        format!("解压完成：{} → {}", path.display(), outcome.dest.display()),
+                        crate::i18n::tr_fmt(
+                            self.language,
+                            "解压完成：{} → {}",
+                            &[&path.display(), &outcome.dest.display()],
+                        ),
                         ToastKind::Success,
                         cx,
                     );
@@ -1276,7 +1300,7 @@ impl MainView {
                     self.set_task_cancelled(id);
                 }
                 Err(error) if error.is_password_related() => {
-                    self.set_task_failed(id, "需要密码");
+                    self.set_task_failed(id, self.localized("需要密码"));
                     if let Some(task) = self.tasks.iter().find(|task| task.id == id) {
                         if let Some(RetrySpec::Extract {
                             path: archive,
@@ -1299,7 +1323,11 @@ impl MainView {
                 }
                 Err(error) => {
                     self.set_task_failed(id, error.to_string());
-                    self.show_toast(format!("解压失败：{error}"), ToastKind::Error, cx);
+                    self.show_toast(
+                        crate::i18n::tr_fmt(self.language, "解压失败：{}", &[&error]),
+                        ToastKind::Error,
+                        cx,
+                    );
                 }
             },
             JobResult::Create {
@@ -1308,9 +1336,13 @@ impl MainView {
                 let standalone = self.feature_window == Some(FeatureWindow::NewArchive);
                 match result {
                     Ok(outcome) => {
-                        self.set_task_completed(id, create_detail(&outcome));
+                        self.set_task_completed(id, create_detail(&outcome, self.language));
                         self.show_toast(
-                            format!("已创建 {}", outcome.dest.display()),
+                            crate::i18n::tr_fmt(
+                                self.language,
+                                "已创建 {}",
+                                &[&outcome.dest.display()],
+                            ),
                             ToastKind::Success,
                             cx,
                         );
@@ -1333,7 +1365,11 @@ impl MainView {
                         if standalone {
                             self.feature_result = Some(FeatureOutcome::Failed(error.to_string()));
                         }
-                        self.show_toast(format!("压缩失败：{error}"), ToastKind::Error, cx);
+                        self.show_toast(
+                            crate::i18n::tr_fmt(self.language, "压缩失败：{}", &[&error]),
+                            ToastKind::Error,
+                            cx,
+                        );
                     }
                 }
             }
@@ -1341,23 +1377,27 @@ impl MainView {
                 Ok(report) => {
                     self.set_task_completed(
                         id,
-                        format!(
+                        crate::i18n::tr_fmt(
+                            self.language,
                             "{} · {} 项 · {}",
-                            path.file_name()
-                                .map(|name| name.to_string_lossy().to_string())
-                                .unwrap_or_default(),
-                            report.entries,
-                            format_size(report.bytes)
+                            &[
+                                &path
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().to_string())
+                                    .unwrap_or_default(),
+                                &report.entries,
+                                &format_size(report.bytes),
+                            ],
                         ),
                     );
                     self.show_toast(
-                        format!("校验通过 · {} 项", report.entries),
+                        crate::i18n::tr_fmt(self.language, "校验通过 · {} 项", &[&report.entries]),
                         ToastKind::Success,
                         cx,
                     );
                 }
                 Err(error) if error.is_password_related() => {
-                    self.set_task_failed(id, "需要密码");
+                    self.set_task_failed(id, self.localized("需要密码"));
                     if let Some(task) = self.tasks.iter().find(|task| task.id == id) {
                         if let Some(RetrySpec::Verify { path, .. }) = &task.retry {
                             self.show_password_modal(
@@ -1374,7 +1414,11 @@ impl MainView {
                 }
                 Err(error) => {
                     self.set_task_failed(id, error.to_string());
-                    self.show_toast(format!("校验失败：{error}"), ToastKind::Error, cx);
+                    self.show_toast(
+                        crate::i18n::tr_fmt(self.language, "校验失败：{}", &[&error]),
+                        ToastKind::Error,
+                        cx,
+                    );
                 }
             },
             JobResult::Hash {
@@ -1388,7 +1432,7 @@ impl MainView {
                         format!("{} · {}", algorithm.label(), short_hash(&hash)),
                     );
                     self.show_toast(
-                        format!("哈希完成：{}", path.display()),
+                        crate::i18n::tr_fmt(self.language, "哈希完成：{}", &[&path.display()]),
                         ToastKind::Success,
                         cx,
                     );
@@ -1398,34 +1442,41 @@ impl MainView {
                 }
                 Err(error) => {
                     self.set_task_failed(id, error.to_string());
-                    self.show_toast(format!("哈希失败：{error}"), ToastKind::Error, cx);
+                    self.show_toast(
+                        crate::i18n::tr_fmt(self.language, "哈希失败：{}", &[&error]),
+                        ToastKind::Error,
+                        cx,
+                    );
                 }
             },
         }
     }
 
     fn set_task_completed(&mut self, id: u64, detail: String) {
+        let phase = self.localized("完成").to_string();
         if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
             task.status = TaskStatus::Completed;
             task.progress = 100.0;
-            task.phase = "完成".to_string();
+            task.phase = phase;
             task.detail = detail;
         }
     }
 
     fn set_task_cancelled(&mut self, id: u64) {
+        let cancelled = self.localized("已取消").to_string();
         if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
             task.status = TaskStatus::Cancelled;
-            task.phase = "已取消".to_string();
-            task.detail = "已取消".to_string();
+            task.phase = cancelled.clone();
+            task.detail = cancelled;
         }
     }
 
     fn set_task_failed(&mut self, id: u64, message: impl Into<String>) {
+        let phase = self.localized("失败").to_string();
         if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
             let message = message.into();
             task.status = TaskStatus::Failed;
-            task.phase = "失败".to_string();
+            task.phase = phase;
             task.detail = message;
         }
     }
@@ -1479,20 +1530,24 @@ impl MainView {
         self.next_task_id += 1;
         let mut task = TaskItem::new(
             id,
-            format!(
+            crate::i18n::tr_fmt(
+                self.language,
                 "打开 {}",
-                path.file_name()
+                &[&path
+                    .file_name()
                     .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default()
+                    .unwrap_or_default()],
             ),
             Some(RetrySpec::Open {
                 path: path.clone(),
                 password: password.clone(),
             }),
+            self.language,
         );
         task.detail = path.display().to_string();
         self.tasks.insert(0, task);
         let sender = self.task_sender.clone();
+        let language = self.language;
         std::thread::spawn(move || {
             let mut resolved = password;
             let mut result = open_archive(
@@ -1521,9 +1576,9 @@ impl MainView {
             {
                 let _ = sender.send(TaskEvent::Progress {
                     id,
-                    phase: "尝试密码",
+                    phase: tr(language, "尝试密码"),
                     percent: 0.0,
-                    detail: "正在按密码本顺序自动尝试…".to_string(),
+                    detail: tr(language, "正在按密码本顺序自动尝试…").to_string(),
                 });
                 let book = PasswordBook::load_default();
                 if let Ok(Some(found)) = book.try_all(&path) {
@@ -1627,6 +1682,7 @@ impl MainView {
                 &mut entries,
                 self.sort_column,
                 self.sort_direction,
+                self.language,
             );
             rows.extend(entries.into_iter().map(Row::Entry));
         } else {
@@ -1642,6 +1698,7 @@ impl MainView {
                 &mut entries,
                 self.sort_column,
                 self.sort_direction,
+                self.language,
             );
             rows.extend(entries.into_iter().map(Row::Entry));
         }
@@ -1746,11 +1803,14 @@ impl MainView {
             return;
         }
         if archive.info.encrypted && archive.password.is_none() {
-            self.preview.error = Some("加密条目：解压时输入密码后可预览".to_string());
+            self.preview.error = Some(
+                self.localized("加密条目：解压时输入密码后可预览")
+                    .to_string(),
+            );
             return;
         }
         if !self.preview_ready {
-            self.preview.error = Some("预览功能初始化中…".to_string());
+            self.preview.error = Some(self.localized("预览功能初始化中…").to_string());
             return;
         }
         let generation = self.preview.generation;
@@ -1966,10 +2026,11 @@ impl MainView {
     }
 
     fn open_file_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let picked = crate::components::file_dialog(|| {
+        let archive_filter = self.localized("压缩包");
+        let picked = crate::components::file_dialog(move || {
             rfd::FileDialog::new()
                 .add_filter(
-                    "压缩包",
+                    archive_filter,
                     &[
                         "zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "tgz", "tbz", "txz",
                         "tzst", "zipx",
@@ -1995,7 +2056,7 @@ impl MainView {
         self.search_query.clear();
         self.rebuild_rows();
         self.page = Page::Main;
-        self.show_toast("已关闭压缩包", ToastKind::Info, cx);
+        self.show_toast(self.localized("已关闭压缩包"), ToastKind::Info, cx);
     }
 
     pub(crate) fn open_new_window(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2021,7 +2082,11 @@ impl MainView {
             cx.new(|cx| MainView::new(window, cx, None, None, None))
         }) {
             Ok(_) => {}
-            Err(error) => self.show_toast(format!("新建窗口失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "新建窗口失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
@@ -2058,7 +2123,11 @@ impl MainView {
                 let _ = handle.update(cx, |_, window, _| window.activate_window());
             }
             Err(error) => {
-                self.show_toast(format!("无法打开窗口：{error}"), ToastKind::Error, cx);
+                self.show_toast(
+                    crate::i18n::tr_fmt(self.language, "无法打开窗口：{}", &[&error]),
+                    ToastKind::Error,
+                    cx,
+                );
             }
         }
     }
@@ -2121,7 +2190,7 @@ impl MainView {
         self.language = language;
         self.settings.general.language = language.as_setting().to_string();
         let placeholder = if language == Language::Zh {
-            "在压缩包内查找…  Ctrl+F"
+            self.localized("在压缩包内查找…  Ctrl+F")
         } else {
             "Search in archive…  Ctrl+F"
         };
@@ -2279,6 +2348,7 @@ fn sort_entries(
     entries: &mut [usize],
     column: SortColumn,
     direction: SortDirection,
+    language: Language,
 ) {
     entries.sort_by(|left, right| {
         let a = info.find(*left);
@@ -2293,7 +2363,9 @@ fn sort_entries(
                     b.is_dir.cmp(&a.is_dir).then_with(|| match column {
                         SortColumn::Compressed => a.compressed_size.cmp(&b.compressed_size),
                         SortColumn::Original => a.size.cmp(&b.size),
-                        SortColumn::Type => entry_kind_label(a).cmp(&entry_kind_label(b)),
+                        SortColumn::Type => {
+                            entry_kind_label(a, language).cmp(&entry_kind_label(b, language))
+                        }
                         SortColumn::Modified => a.modified.cmp(&b.modified),
                         SortColumn::Method => a.method.cmp(&b.method),
                         SortColumn::Encryption => a.encrypted.cmp(&b.encrypted),
@@ -2315,15 +2387,15 @@ fn sort_entries(
     });
 }
 
-pub(crate) fn entry_kind_label(entry: &rarkzip_engine::ArchiveEntry) -> String {
+pub(crate) fn entry_kind_label(entry: &rarkzip_engine::ArchiveEntry, language: Language) -> String {
     if entry.is_dir {
-        return "文件夹".to_string();
+        return tr(language, "文件夹").to_string();
     }
     std::path::Path::new(&entry.path)
         .extension()
         .map(|ext| ext.to_string_lossy().to_ascii_uppercase())
         .filter(|ext| !ext.is_empty())
-        .unwrap_or_else(|| "文件".to_string())
+        .unwrap_or_else(|| tr(language, "文件").to_string())
 }
 
 pub(crate) fn default_column_width(key: &str) -> f32 {
@@ -2409,16 +2481,23 @@ fn short_hash(hash: &str) -> String {
     }
 }
 
-fn create_detail(outcome: &CreateOutcome) -> String {
-    let mut detail = format!(
+fn create_detail(outcome: &CreateOutcome, language: Language) -> String {
+    let mut detail = crate::i18n::tr_fmt(
+        language,
         "{} 个文件 · {} → {} ({})",
-        outcome.entries,
-        format_size(outcome.source_bytes),
-        format_size(outcome.compressed_bytes),
-        outcome.ratio
+        &[
+            &outcome.entries,
+            &format_size(outcome.source_bytes),
+            &format_size(outcome.compressed_bytes),
+            &outcome.ratio,
+        ],
     );
     if outcome.volumes > 1 {
-        detail.push_str(&format!(" · {} 卷", outcome.volumes));
+        detail.push_str(&crate::i18n::tr_fmt(
+            language,
+            " · {} 卷",
+            &[&outcome.volumes],
+        ));
     }
     detail
 }
@@ -2723,15 +2802,15 @@ impl MainView {
                     IconName::CircleCheck,
                     palette.ok,
                     palette.ok_soft,
-                    "压缩包已创建",
-                    "压缩完成，可以打开查看内容。",
+                    self.localized("压缩包已创建"),
+                    self.localized("压缩完成，可以打开查看内容。"),
                     Some(dest.clone()),
                 ),
                 FeatureOutcome::Failed(error) => (
                     IconName::CircleX,
                     palette.bad,
                     palette.bad_soft,
-                    "压缩失败",
+                    self.localized("压缩失败"),
                     error.as_str(),
                     None,
                 ),
@@ -2739,15 +2818,15 @@ impl MainView {
                     IconName::CircleX,
                     palette.muted,
                     palette.panel,
-                    "已取消",
-                    "任务已停止，未完成的输出文件已清理。",
+                    self.localized("已取消"),
+                    self.localized("任务已停止，未完成的输出文件已清理。"),
                     None,
                 ),
             };
             let open_button = dest.as_ref().map(|dest| {
                 let dest = dest.clone();
                 Button::new("feature-open-created")
-                    .label("打开压缩包")
+                    .label(self.localized("打开压缩包"))
                     .primary()
                     .h(px(crate::components::CONTROL_HEIGHT))
                     .px(px(16.0))
@@ -2768,7 +2847,7 @@ impl MainView {
             )
             .then(|| {
                 Button::new("feature-retry")
-                    .label("返回")
+                    .label(self.localized("返回"))
                     .outline()
                     .h(px(crate::components::CONTROL_HEIGHT))
                     .px(px(16.0))
@@ -2777,7 +2856,7 @@ impl MainView {
                     }))
             });
             let close = Button::new("feature-close")
-                .label("关闭")
+                .label(self.localized("关闭"))
                 .outline()
                 .h(px(crate::components::CONTROL_HEIGHT))
                 .px(px(16.0))
@@ -2857,11 +2936,11 @@ impl MainView {
             let percent = task.map(|task| task.progress).unwrap_or(0.0);
             let phase = task
                 .map(|task| task.phase.clone())
-                .unwrap_or_else(|| "准备中".to_string());
+                .unwrap_or_else(|| self.localized("准备中").to_string());
             let detail = task.map(|task| task.detail.clone()).unwrap_or_default();
             let stop = task.is_some().then(|| {
                 Button::new("feature-stop")
-                    .label("停止")
+                    .label(self.localized("停止"))
                     .outline()
                     .h(px(crate::components::CONTROL_HEIGHT))
                     .px(px(16.0))
@@ -2882,7 +2961,7 @@ impl MainView {
                         .text_size(crate::theme::font_px(17.0))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(palette.text)
-                        .child("正在压缩"),
+                        .child(self.localized("正在压缩")),
                 )
                 .child(
                     div()
@@ -2932,9 +3011,9 @@ impl MainView {
         if self.rows.is_empty() {
             return empty_panel(
                 if self.search_query.trim().is_empty() {
-                    "此文件夹为空"
+                    self.localized("此文件夹为空")
                 } else {
-                    "没有匹配的条目"
+                    self.localized("没有匹配的条目")
                 },
                 &palette,
             )
@@ -2975,21 +3054,21 @@ impl MainView {
         if !is_zip && comment.is_none() {
             return div().into_any_element();
         }
-        let shown = comment.unwrap_or_else(|| "暂无注释".to_string());
+        let shown = comment.unwrap_or_else(|| self.localized("暂无注释").to_string());
         let mut header = div().flex().items_center().justify_between().child(
             div()
                 .font_family(crate::theme::ui_font_family())
                 .text_size(crate::theme::font_px(11.5))
                 .text_color(palette.sub)
-                .child("压缩包注释"),
+                .child(self.localized("压缩包注释")),
         );
         if is_zip {
             header = header.child(
                 Button::new("comment-edit")
-                    .label(if shown == "暂无注释" {
-                        "添加"
+                    .label(if shown == self.localized("暂无注释") {
+                        self.localized("添加")
                     } else {
-                        "编辑"
+                        self.localized("编辑")
                     })
                     .ghost()
                     .small()
@@ -3108,6 +3187,40 @@ mod ui_tests {
         visual.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
+    }
+
+    /// 英文界面下逐页渲染设置页，覆盖所有翻译后的标签与布局。
+    #[cfg(debug_assertions)]
+    #[gpui_kit::test]
+    fn settings_pages_render_in_english(cx: &mut TestAppContext) {
+        use super::{Page, SettingsPage};
+
+        let _serial = crate::UI_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let _env = LocalAppDataGuard::set(temp.path());
+        let data_dir = temp.path().join("RarkZip");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(
+            data_dir.join("settings.json"),
+            r#"{"general":{"language":"en-US"}}"#,
+        )
+        .unwrap();
+        cx.update(gpui_kit::init);
+
+        let (view, visual) =
+            cx.add_window_view(|window, cx| MainView::new(window, cx, None, None, None));
+        pump(visual);
+
+        for page in SettingsPage::NAV_ORDER {
+            visual.update_entity(&view, |view, cx| {
+                view.page = Page::Settings;
+                view.settings_page = page;
+                cx.notify();
+            });
+            pump(visual);
+        }
     }
 
     /// 主窗口密码弹窗：展开密码本并点击条目后，密码应送回等待中的任务。

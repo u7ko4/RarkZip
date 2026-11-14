@@ -20,6 +20,11 @@ use std::time::{Duration, Instant, SystemTime};
 use gpui_kit::*;
 use rarkzip_engine::Settings;
 
+fn ui_language() -> crate::i18n::Language {
+    let settings = Settings::load();
+    crate::i18n::Language::from_setting(&settings.general.language)
+}
+
 fn main() -> std::process::ExitCode {
     let mut args: Vec<String> = std::env::args().collect();
     let exe_stem = std::env::current_exe()
@@ -66,7 +71,10 @@ fn main() -> std::process::ExitCode {
         if relaunch_elevated(&args[1..]) {
             return std::process::ExitCode::SUCCESS;
         }
-        eprintln!("RarkZip: 未获得管理员权限，操作已取消");
+        eprintln!(
+            "{}",
+            crate::i18n::tr(ui_language(), "RarkZip: 未获得管理员权限，操作已取消")
+        );
         return std::process::ExitCode::SUCCESS;
     }
 
@@ -537,8 +545,9 @@ fn run_batch_preset_if_needed(
         Ok(()) => Some(std::process::ExitCode::SUCCESS),
         Err(error) if error.is_password_related() => None,
         Err(error) => {
+            let language = ui_language();
             let _ = rfd::MessageDialog::new()
-                .set_title("RarkZip 解压失败")
+                .set_title(crate::i18n::tr(language, "RarkZip 解压失败"))
                 .set_description(format!("{}\n\n{error}", archive.display()))
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
@@ -736,19 +745,22 @@ fn take_flag_values(args: &mut Vec<String>, flag: &str) -> Vec<PathBuf> {
 }
 
 fn run_sfx(info: rarkzip_engine::SfxInfo, exe: PathBuf) -> std::process::ExitCode {
+    let language = ui_language();
     let silent = std::env::var_os("RARKZIP_SFX_SILENT").is_some();
     if !silent && (!info.config.prompt.trim().is_empty() || !info.config.title.trim().is_empty()) {
         let title = if info.config.title.trim().is_empty() {
-            "RarkZip 自解压"
+            crate::i18n::tr(language, "RarkZip 自解压")
         } else {
             info.config.title.as_str()
         };
         let message = if info.config.prompt.trim().is_empty() {
-            format!(
+            crate::i18n::tr_fmt(
+                language,
                 "将解压到：{}",
-                exe.parent()
+                &[&exe
+                    .parent()
                     .unwrap_or_else(|| std::path::Path::new("."))
-                    .display()
+                    .display()],
             )
         } else {
             info.config.prompt.clone()
@@ -777,8 +789,12 @@ fn run_sfx(info: rarkzip_engine::SfxInfo, exe: PathBuf) -> std::process::ExitCod
                 println!("{}", destination.display());
             } else {
                 let _ = rfd::MessageDialog::new()
-                    .set_title("RarkZip 自解压")
-                    .set_description(format!("解压完成：{}", destination.display()))
+                    .set_title(crate::i18n::tr(language, "RarkZip 自解压"))
+                    .set_description(crate::i18n::tr_fmt(
+                        language,
+                        "解压完成：{}",
+                        &[&destination.display()],
+                    ))
                     .set_buttons(rfd::MessageButtons::Ok)
                     .show();
                 let _ = open::that(destination);
@@ -787,10 +803,13 @@ fn run_sfx(info: rarkzip_engine::SfxInfo, exe: PathBuf) -> std::process::ExitCod
         }
         Err(error) => {
             if silent {
-                eprintln!("SFX 解压失败：{error}");
+                eprintln!(
+                    "{}",
+                    crate::i18n::tr_fmt(language, "SFX 解压失败：{}", &[&error])
+                );
             } else {
                 let _ = rfd::MessageDialog::new()
-                    .set_title("RarkZip 自解压失败")
+                    .set_title(crate::i18n::tr(language, "RarkZip 自解压失败"))
                     .set_description(error.to_string())
                     .set_buttons(rfd::MessageButtons::Ok)
                     .show();

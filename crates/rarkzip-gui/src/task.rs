@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::i18n::{tr, Language};
 use crossbeam_channel::{RecvTimeoutError, Sender};
 use rarkzip_engine::{
     ArchiveInfo, CreateOptions, CreateOutcome, EngineError, ExtractOptions, ExtractOutcome,
@@ -55,14 +56,19 @@ pub struct TaskItem {
 }
 
 impl TaskItem {
-    pub fn new(id: u64, title: impl Into<String>, retry: Option<RetrySpec>) -> Self {
+    pub fn new(
+        id: u64,
+        title: impl Into<String>,
+        retry: Option<RetrySpec>,
+        language: Language,
+    ) -> Self {
         Self {
             id,
             title: title.into(),
-            detail: "等待开始…".to_string(),
+            detail: tr(language, "等待开始…").to_string(),
             status: TaskStatus::Running,
             progress: 0.0,
-            phase: Phase::Preparing.label().to_string(),
+            phase: tr(language, Phase::Preparing.label()).to_string(),
             cancel: Arc::new(AtomicBool::new(false)),
             dest: None,
             retry,
@@ -127,11 +133,22 @@ pub struct GuiSink {
     sender: Sender<TaskEvent>,
     id: u64,
     cancel: Arc<AtomicBool>,
+    language: Language,
 }
 
 impl GuiSink {
-    pub fn new(sender: Sender<TaskEvent>, id: u64, cancel: Arc<AtomicBool>) -> Self {
-        Self { sender, id, cancel }
+    pub fn new(
+        sender: Sender<TaskEvent>,
+        id: u64,
+        cancel: Arc<AtomicBool>,
+        language: Language,
+    ) -> Self {
+        Self {
+            sender,
+            id,
+            cancel,
+            language,
+        }
     }
 }
 
@@ -139,7 +156,7 @@ impl ProgressSink for GuiSink {
     fn update(&self, progress: &Progress) {
         let _ = self.sender.send(TaskEvent::Progress {
             id: self.id,
-            phase: progress.phase.label(),
+            phase: tr(self.language, progress.phase.label()),
             percent: progress.percent(),
             detail: progress.current.clone(),
         });

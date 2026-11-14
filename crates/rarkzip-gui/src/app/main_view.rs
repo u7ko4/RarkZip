@@ -86,7 +86,7 @@ impl MainView {
                         .text_color(palette.sub)
                         .flex()
                         .justify_center()
-                        .child("拖放文件到此处添加"),
+                        .child(self.localized("拖放文件到此处添加")),
                 )
             })
             .into_any_element()
@@ -179,7 +179,7 @@ impl MainView {
         let comment_active = self.settings.view.show_comment;
         let nav = self.file_toolbar_toggle(
             "file-toolbar-nav",
-            "导航",
+            self.localized("导航"),
             IconName::ListTree,
             nav_active,
             |this, cx| this.toggle_tree_panel(cx),
@@ -187,7 +187,7 @@ impl MainView {
         );
         let preview = self.file_toolbar_toggle(
             "file-toolbar-preview",
-            "预览",
+            self.localized("预览"),
             IconName::Image,
             preview_active,
             |this, cx| this.toggle_preview_panel(cx),
@@ -195,7 +195,7 @@ impl MainView {
         );
         let comment = self.file_toolbar_toggle(
             "file-toolbar-comment",
-            "注释",
+            self.localized("注释"),
             IconName::MessageSquareText,
             comment_active,
             |this, cx| this.toggle_comment_panel(cx),
@@ -204,7 +204,7 @@ impl MainView {
 
         let close_archive = self.file_toolbar_toggle(
             "file-toolbar-close",
-            "关闭压缩包",
+            self.localized("关闭压缩包"),
             IconName::X,
             false,
             |this, cx| this.close_current_archive(cx),
@@ -213,7 +213,7 @@ impl MainView {
 
         let list_segment = self.file_view_segment(
             "file-view-list",
-            "列表",
+            self.localized("列表"),
             IconName::List,
             FileViewMode::List,
             true,
@@ -222,7 +222,7 @@ impl MainView {
         );
         let icons_segment = self.file_view_segment(
             "file-view-icons",
-            "图标",
+            self.localized("图标"),
             IconName::LayoutGrid,
             FileViewMode::Icons,
             false,
@@ -253,7 +253,7 @@ impl MainView {
                         Slider::new(&self.icon_size_slider)
                             .w_full()
                             .h(px(20.0))
-                            .accessibility_label("图标大小"),
+                            .accessibility_label(self.localized("图标大小")),
                     ),
                 )
                 .when(!compact, |this| {
@@ -521,12 +521,12 @@ impl MainView {
                 } else {
                     entry.name().to_string()
                 };
-                let display_method = if is_dir {
-                    "存储".to_string()
+                let display_method = if is_dir || entry.method == "Store" {
+                    self.localized("存储").to_string()
                 } else {
-                    display_method(&entry.method).to_string()
+                    entry.method.clone()
                 };
-                let kind_label = crate::app::entry_kind_label(&entry);
+                let kind_label = crate::app::entry_kind_label(&entry, self.language);
 
                 let entry_path = entry.path.clone();
                 let size_label = if is_dir {
@@ -540,23 +540,27 @@ impl MainView {
                     format_size(entry.compressed_size)
                 };
                 let modified_label = format_short_time(entry.modified);
-                let encryption_label = if entry.encrypted { "是" } else { "—" };
+                let encryption_label = if entry.encrypted {
+                    self.localized("是")
+                } else {
+                    "—"
+                };
                 let crc_label = entry
                     .crc32
                     .map(|crc| format!("{crc:08X}"))
                     .unwrap_or_else(|| "—".to_string());
                 let attributes_label = if entry.is_symlink {
-                    "链接"
+                    self.localized("链接")
                 } else if is_dir {
-                    "目录"
+                    self.localized("目录")
                 } else {
-                    "文件"
+                    self.localized("文件")
                 };
                 let comment_label = entry.comment.clone().unwrap_or_else(|| "—".to_string());
                 let extra_label = if entry.is_symlink {
-                    "符号链接"
+                    self.localized("符号链接")
                 } else if entry.encrypted {
-                    "AES / 加密"
+                    self.localized("AES / 加密")
                 } else {
                     "—"
                 };
@@ -936,7 +940,7 @@ impl MainView {
                 div()
                     .id("h-scroll-left")
                     .role(Role::Button)
-                    .aria_label("向左滚动")
+                    .aria_label(self.localized("向左滚动"))
                     .w(px(16.0))
                     .h(px(16.0))
                     .rounded(px(4.0))
@@ -953,7 +957,7 @@ impl MainView {
                 div()
                     .id("h-scroll-right")
                     .role(Role::Button)
-                    .aria_label("向右滚动")
+                    .aria_label(self.localized("向右滚动"))
                     .w(px(16.0))
                     .h(px(16.0))
                     .rounded(px(4.0))
@@ -1049,9 +1053,9 @@ impl MainView {
                 )
                 .child(empty_panel(
                     if self.search_query.trim().is_empty() {
-                        "此文件夹为空"
+                        self.localized("此文件夹为空")
                     } else {
-                        "没有匹配的条目"
+                        self.localized("没有匹配的条目")
                     },
                     &palette,
                 ))
@@ -1079,7 +1083,7 @@ impl MainView {
                 entry.name().to_string()
             };
             let size = if is_dir {
-                "文件夹".to_string()
+                self.localized("文件夹").to_string()
             } else {
                 format_size(entry.size)
             };
@@ -1178,9 +1182,13 @@ impl MainView {
                         .text_size(crate::theme::font_px(10.5))
                         .text_color(palette.muted)
                         .child(if is_dir {
-                            "文件夹".to_string()
+                            self.localized("文件夹").to_string()
                         } else {
-                            format!("{} · {}", size, crate::app::entry_kind_label(&entry))
+                            format!(
+                                "{} · {}",
+                                size,
+                                crate::app::entry_kind_label(&entry, self.language)
+                            )
                         }),
                 );
             grid = grid.child(tile);
@@ -1295,9 +1303,14 @@ impl MainView {
                     .child(entry.name().to_string()),
             );
             let kind = if entry.is_dir {
-                "文件夹".to_string()
+                self.localized("文件夹").to_string()
             } else {
-                extension_label(&entry.path)
+                let label = extension_label(&entry.path);
+                if label == "文件" {
+                    self.localized("文件").to_string()
+                } else {
+                    label
+                }
             };
             let mut info = div()
                 .flex()
@@ -1359,43 +1372,27 @@ impl MainView {
                     (size + entry.size, compressed + entry.compressed_size)
                 });
             let selection_label = if selected_count > 0 {
-                if self.language == Language::En {
-                    format!(
-                        "{} selected · Original {} (compressed {})",
-                        selected_count,
-                        format_size(selected_size),
-                        format_size(selected_compressed)
-                    )
-                } else {
-                    format!(
-                        "已选择 {} 项 · 原始 {}（压缩后 {}）",
-                        selected_count,
-                        format_size(selected_size),
-                        format_size(selected_compressed)
-                    )
-                }
-            } else if self.language == Language::En {
-                format!("{} objects", archive.info.file_count())
+                crate::i18n::tr_fmt(
+                    self.language,
+                    "已选择 {} 项 · 原始 {}（压缩后 {}）",
+                    &[
+                        &selected_count,
+                        &format_size(selected_size),
+                        &format_size(selected_compressed),
+                    ],
+                )
             } else {
-                format!("{} 个对象", archive.info.file_count())
+                crate::i18n::tr_fmt(self.language, "{} 个对象", &[&archive.info.file_count()])
             };
-            bar = bar
-                .child(selection_label)
-                .child(if self.language == Language::En {
-                    format!(
-                        "Original {} → Compressed {} ({} saved)",
-                        format_size(archive.info.total_size()),
-                        format_size(archive.info.total_compressed()),
-                        saved_ratio(archive.info.total_compressed(), archive.info.total_size())
-                    )
-                } else {
-                    format!(
-                        "原始 {} → 压缩后 {}（压缩率 {}）",
-                        format_size(archive.info.total_size()),
-                        format_size(archive.info.total_compressed()),
-                        saved_ratio(archive.info.total_compressed(), archive.info.total_size())
-                    )
-                });
+            bar = bar.child(selection_label).child(crate::i18n::tr_fmt(
+                self.language,
+                "原始 {} → 压缩后 {}（压缩率 {}）",
+                &[
+                    &format_size(archive.info.total_size()),
+                    &format_size(archive.info.total_compressed()),
+                    &saved_ratio(archive.info.total_compressed(), archive.info.total_size()),
+                ],
+            ));
         } else {
             bar = bar.child(tr(self.language, "打开压缩包或新建压缩包"));
         }
@@ -1545,13 +1542,6 @@ pub(crate) fn saved_ratio(compressed: u64, original: u64) -> String {
     }
     let saved = (1.0 - compressed as f64 / original as f64) * 100.0;
     format!("{:.0}%", saved.clamp(0.0, 100.0))
-}
-
-pub(crate) fn display_method(method: &str) -> &str {
-    match method {
-        "Store" => "存储",
-        other => other,
-    }
 }
 
 pub(crate) fn extension_label(path: &str) -> String {
