@@ -17,6 +17,7 @@ pub(crate) enum DropdownKind {
     NewVolumeSize,
     CryptAlgorithm,
     CryptEncoding,
+    SignatureSigningKey,
 }
 
 #[derive(Debug, Clone)]
@@ -244,7 +245,9 @@ impl MainView {
                     .unwrap_or(rarkzip_crypt::Algorithm::Aes256);
                 rarkzip_crypt::Algorithm::UI
                     .iter()
-                    .map(|algorithm| DropdownOption::new(algorithm.label(), *algorithm == current))
+                    .map(|algorithm| {
+                        DropdownOption::new(algorithm.label().to_string(), *algorithm == current)
+                    })
                     .collect()
             }
             DropdownKind::CryptEncoding => {
@@ -261,6 +264,19 @@ impl MainView {
                 .iter()
                 .map(|encoding| DropdownOption::new(encoding.label(), *encoding == current))
                 .collect()
+            }
+            DropdownKind::SignatureSigningKey => {
+                let Some(state) = self.signature_state.as_ref() else {
+                    return Vec::new();
+                };
+                let current = state.selected_signing_key();
+                state
+                    .signing_key_options()
+                    .into_iter()
+                    .map(|(fingerprint, label)| {
+                        DropdownOption::new(label, Some(fingerprint) == current)
+                    })
+                    .collect()
             }
         }
     }
@@ -389,6 +405,14 @@ impl MainView {
                         TextEncoding::Base10 => 2,
                     };
                     self.save_settings();
+                }
+            }
+            DropdownKind::SignatureSigningKey => {
+                if let Some(state) = &mut self.signature_state {
+                    if let Some((fingerprint, _)) = state.signing_key_options().get(index).cloned()
+                    {
+                        state.select_signing_key(fingerprint);
+                    }
                 }
             }
         }
@@ -559,6 +583,7 @@ impl DropdownKind {
             Self::NewVolumeSize => "new-volume-size",
             Self::CryptAlgorithm => "crypt-algorithm",
             Self::CryptEncoding => "crypt-encoding",
+            Self::SignatureSigningKey => "signature-signing-key",
         }
     }
 }

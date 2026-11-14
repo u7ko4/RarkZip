@@ -271,6 +271,15 @@ impl MainView {
                     cx,
                 ))
                 .child(self.menu_item(
+                    "submenu-signature",
+                    IconName::Signature,
+                    "GnuPG 签名工具…",
+                    None,
+                    true,
+                    |this, _, cx| this.open_signature_tool(cx),
+                    cx,
+                ))
+                .child(self.menu_item(
                     "submenu-scan",
                     IconName::ScanSearch,
                     "扫描恶意软件",

@@ -837,6 +837,10 @@ impl MainView {
                 self.handle_crypt_drop(paths, window, cx);
                 return;
             }
+            Some(FeatureWindow::Signature) => {
+                self.handle_signature_drop(paths, window, cx);
+                return;
+            }
             Some(FeatureWindow::PasswordRecovery) => {
                 if let Some(path) = paths.iter().find(|path| path.is_file()) {
                     self.recovery_path = Some(path.clone());
@@ -1581,6 +1585,13 @@ impl MainView {
             return;
         }
         self.open_feature_window(FeatureWindow::Crypt, Vec::new(), None, cx);
+    }
+
+    pub(super) fn open_signature_tool(&mut self, cx: &mut Context<Self>) {
+        if self.feature_window == Some(FeatureWindow::Signature) {
+            return;
+        }
+        self.open_feature_window(FeatureWindow::Signature, Vec::new(), None, cx);
     }
 
     pub(super) fn open_hash_modal(&mut self, cx: &mut Context<Self>) {

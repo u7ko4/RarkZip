@@ -35,6 +35,7 @@ mod dropdown;
 mod main_view;
 mod menu;
 mod settings_view;
+mod signature_view;
 
 pub(crate) use dropdown::DropdownKind;
 
@@ -48,6 +49,7 @@ enum Page {
     PasswordRecovery,
     Hash,
     Crypt,
+    Signature,
 }
 
 /// 应用主菜单中的二级子菜单。
@@ -64,6 +66,7 @@ pub(crate) enum FeatureWindow {
     PasswordRecovery,
     Hash,
     Crypt,
+    Signature,
 }
 
 impl FeatureWindow {
@@ -73,12 +76,14 @@ impl FeatureWindow {
             Self::PasswordRecovery => "密码恢复",
             Self::Hash => "文件哈希",
             Self::Crypt => "文件与文本加密",
+            Self::Signature => "GnuPG 签名工具",
         }
     }
 
     pub(crate) fn title_for(self, language: Language) -> &'static str {
         match self {
             Self::Crypt => crate::i18n::tr(language, "文件与文本加密"),
+            Self::Signature => crate::i18n::tr(language, "GnuPG 签名工具"),
             _ => self.title(),
         }
     }
@@ -89,6 +94,7 @@ impl FeatureWindow {
             Self::PasswordRecovery => IconName::Key,
             Self::Hash => IconName::Hash,
             Self::Crypt => IconName::LockKeyhole,
+            Self::Signature => IconName::Signature,
         }
     }
 
@@ -98,6 +104,7 @@ impl FeatureWindow {
             Self::PasswordRecovery => Page::PasswordRecovery,
             Self::Hash => Page::Hash,
             Self::Crypt => Page::Crypt,
+            Self::Signature => Page::Signature,
         }
     }
 
@@ -107,6 +114,7 @@ impl FeatureWindow {
             Self::PasswordRecovery => (720.0, 620.0),
             Self::Hash => (980.0, 480.0),
             Self::Crypt => (1120.0, 760.0),
+            Self::Signature => (1040.0, 780.0),
         }
     }
 
@@ -117,6 +125,7 @@ impl FeatureWindow {
             Self::PasswordRecovery => "recovery",
             Self::Hash => "hash",
             Self::Crypt => "crypt",
+            Self::Signature => "signature",
         }
     }
 }
@@ -633,6 +642,7 @@ pub struct MainView {
     hash_batch_sender: Sender<HashBatchEvent>,
     hash_batch_receiver: Receiver<HashBatchEvent>,
     crypt_state: Option<crypt_view::CryptState>,
+    signature_state: Option<signature_view::SignatureState>,
     preview: PreviewState,
     preview_sender: Sender<PreviewEvent>,
     preview_receiver: Receiver<PreviewEvent>,
@@ -705,6 +715,7 @@ impl MainView {
                 }
             }
             FeatureWindow::Crypt => view.init_crypt(window, cx, new_sources),
+            FeatureWindow::Signature => view.init_signature(window, cx, new_sources),
         }
         view
     }
@@ -897,6 +908,7 @@ impl MainView {
             hash_batch_sender,
             hash_batch_receiver,
             crypt_state: None,
+            signature_state: None,
             preview: PreviewState::default(),
             preview_sender,
             preview_receiver,
@@ -1039,6 +1051,7 @@ impl MainView {
                 "recovery" => view.open_password_recovery(window, cx),
                 "hash-batch" => view.open_hash_batch(cx),
                 "crypt" => view.open_crypt_tool(cx),
+                "signature" => view.open_signature_tool(cx),
                 "columns" => view.open_columns(cx),
                 "toolbar" => view.open_toolbar_settings(cx),
                 _ => {}
@@ -1087,6 +1100,9 @@ impl MainView {
             changed = true;
         }
         if self.drain_crypt_events(cx) {
+            changed = true;
+        }
+        if self.drain_signature_events(cx) {
             changed = true;
         }
         while let Ok(event) = self.open_receiver.try_recv() {
@@ -2427,6 +2443,7 @@ impl Render for MainView {
             Page::PasswordRecovery => self.render_password_recovery_page(cx),
             Page::Hash => self.render_hash_page(window, cx),
             Page::Crypt => self.render_crypt_page(window, cx),
+            Page::Signature => self.render_signature_page(window, cx),
         };
         // 任务中心、设置以及各功能页使用整页布局，不再显示归档地址栏与搜索框；
         // 首页（未打开归档）也不再显示地址栏，直接进入卡片式开始页。
@@ -2640,6 +2657,7 @@ impl MainView {
             FeatureWindow::PasswordRecovery => self.render_password_recovery_page(cx),
             FeatureWindow::Hash => self.render_hash_page(window, cx),
             FeatureWindow::Crypt => self.render_crypt_page(window, cx),
+            FeatureWindow::Signature => self.render_signature_page(window, cx),
         };
         // 独立窗口同样需要下拉层、模态框、Toast 与拖放处理，
         // 否则格式/算法下拉等控件会表现为“点了没反应”。

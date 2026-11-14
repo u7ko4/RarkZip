@@ -262,7 +262,7 @@ fn en(zh: &'static str) -> &'static str {
         "就绪" => "Ready",
         "准备" => "Preparing",
         "正在压缩" => "Compressing",
-        "校验" => "Verifying",
+        "校验" => "Verify",
         "正在解压" => "Extracting",
         "处理中" => "Processing",
         "处理中…" => "Processing…",
@@ -324,6 +324,128 @@ fn en(zh: &'static str) -> &'static str {
         "从隐写图读取" => "Read from Steganogram",
         "隐写图已生成" => "Steganogram created",
         "已从隐写图读取文本" => "Text extracted from steganogram",
+        "GnuPG 签名工具" => "GnuPG Signature Tool",
+        "GnuPG 签名工具…" => "GnuPG Signature Tool…",
+        "公钥" => "Public keys",
+        "公钥已吊销" => "Key revoked",
+        "公钥已过期" => "Key expired",
+        "公钥无效" => "Invalid key",
+        "公钥未通过自签名校验。" => "The public key failed its self-signature check.",
+        "分离签名" => "Detached signature",
+        "分离签名需要原始文件；明文签名可留空" => {
+            "Detached signatures need the original file; clearsigned messages do not"
+        }
+        "分离签名需要选择被签名的原始文件" => {
+            "Choose the signed file for this detached signature"
+        }
+        "密钥 ID" => "Key ID",
+        "密钥创建" => "Key created",
+        "密钥过期" => "Key expires",
+        "导入公钥…" => "Import Key…",
+        "导入签名者的公钥（.asc / .gpg）后即可离线校验。" => {
+            "Import the signer's public key (.asc / .gpg) to verify offline."
+        }
+        "尚未导入公钥" => "No public keys imported",
+        "尚未校验" => "Not verified yet",
+        "已导入公钥" => "Public key imported",
+        "已移除公钥" => "Public key removed",
+        "打开目录" => "Open Folder",
+        "指纹" => "Fingerprint",
+        "支持 .sig / .asc / .gpg 与明文签名" => {
+            "Supports .sig / .asc / .gpg and clearsigned messages"
+        }
+        "无法完成校验。" => "Verification could not be completed.",
+        "明文签名" => "Clearsigned",
+        "更换…" => "Change…",
+        "未知签名者" => "Unknown signer",
+        "本地公钥环" => "Local keyring",
+        "本地公钥环中没有签发此签名的公钥，请先导入。" => {
+            "The signing key is not in the local keyring. Import it first."
+        }
+        "校验失败" => "Verification failed",
+        "校验完成" => "Verification complete",
+        "校验签名" => "Verify Signature",
+        "校验结果" => "Verification Result",
+        "正在校验…" => "Verifying…",
+        "清除" => "Clear",
+        "移除公钥" => "Remove key",
+        "签名与文件内容不匹配，文件可能已被修改。" => {
+            "The signature does not match the file; the file may have been modified."
+        }
+        "签名与文件内容匹配，且公钥位于本地公钥环中。" => {
+            "The signature matches the file, and the key is in the local keyring."
+        }
+        "签名与文本在同一文件中，无需原始文件" => {
+            "The signature and text are in one file; no original file is needed"
+        }
+        "签名密钥已被吊销，不应信任。" => {
+            "The signing key has been revoked and should not be trusted."
+        }
+        "签名已超过有效期。" => "The signature has expired.",
+        "签名已过期" => "Signature expired",
+        "签名文件" => "Signature file",
+        "签名无效" => "Invalid signature",
+        "签名时间" => "Signed at",
+        "签名有效" => "Valid signature",
+        "签名本身有效，但签名密钥已过期。" => {
+            "The signature is valid, but the signing key has expired."
+        }
+        "签名者" => "Signer",
+        "缺少公钥" => "Public key missing",
+        "至" => "until",
+        "被签名文件" => "Signed file",
+        "详情" => "Details",
+        "请选择签名文件" => "Choose a signature file",
+        "请选择签名文件和原始文件" => "Choose both the signature and the original file",
+        "选择或拖入原始文件" => "Choose or drop the original file",
+        "选择或拖入签名文件" => "Choose or drop a signature file",
+        "选择文件…" => "Choose File…",
+        "选择签名…" => "Choose Signature…",
+        "选择签名文件和被签名文件后开始校验" => {
+            "Choose a signature and a signed file to start"
+        }
+        "签名" => "Sign",
+        "私钥" => "Private keys",
+        "签名私钥" => "Signing key",
+        "导入私钥…" => "Import Key…",
+        "尚未导入私钥" => "No private keys imported",
+        "仅支持带口令的 OpenPGP 私钥。" => "Only passphrase-protected OpenPGP private keys are supported.",
+        "选择或拖入要签名的文件" => "Choose or drop a file to sign",
+        "支持任意文件类型" => "Supports any file type",
+        "要签名的文件" => "File to sign",
+        "签名选项" => "Signing options",
+        "未选择私钥" => "No signing key selected",
+        "选择文件后自动生成" => "Generated after choosing a file",
+        "另存为…" => "Save As…",
+        "ASCII armor (.asc)" => "ASCII armor (.asc)",
+        "私钥口令" => "Private key passphrase",
+        "显示口令" => "Show passphrase",
+        "正在签名…" => "Signing…",
+        "签名完成" => "Signing complete",
+        "签名失败" => "Signing failed",
+        "生成签名" => "Create Signature",
+        "请选择文件、私钥和输出位置" => "Choose a file, signing key and output location",
+        "请输入私钥口令" => "Enter the private key passphrase",
+        "已吊销" => "Revoked",
+        "移除私钥" => "Remove key",
+        "签名结果" => "Signature Result",
+        "ASCII armor" => "ASCII armor",
+        "二进制签名" => "Binary signature",
+        "尚未生成签名" => "No signature created yet",
+        "选择文件、私钥并输入口令后生成签名" => {
+            "Choose a file and signing key, then enter the passphrase to create a signature"
+        }
+        "签名已生成" => "Signature created",
+        "签名文件已写入磁盘。" => "The signature file has been written to disk.",
+        "格式" => "Format",
+        "请选择要签名的文件" => "Choose a file to sign",
+        "请选择签名输出文件" => "Choose where to save the signature",
+        "请选择签名私钥" => "Choose a signing key",
+        "已导入私钥" => "Private key imported",
+        "已移除私钥" => "Private key removed",
+        "原文件不会被修改，签名会写入单独的 .sig / .asc 文件。" => {
+            "The original file is not modified; the signature is written to a separate .sig / .asc file."
+        }
         _ => zh,
     }
 }
