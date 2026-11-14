@@ -48,9 +48,9 @@ impl Gost28147 {
         let mut n1 = u32::from_le_bytes(block[0..4].try_into().expect("four bytes"));
         let mut n2 = u32::from_le_bytes(block[4..8].try_into().expect("four bytes"));
         for _ in 0..3 {
-            for index in 0..8 {
+            for &key in &self.key {
                 let tmp = n1;
-                n1 = n2 ^ Self::main_step(n1, self.key[index]);
+                n1 = n2 ^ Self::main_step(n1, key);
                 n2 = tmp;
             }
         }
@@ -67,9 +67,9 @@ impl Gost28147 {
     pub fn decrypt_block(&self, block: &mut [u8]) {
         let mut n1 = u32::from_le_bytes(block[0..4].try_into().expect("four bytes"));
         let mut n2 = u32::from_le_bytes(block[4..8].try_into().expect("four bytes"));
-        for index in 0..8 {
+        for &key in &self.key {
             let tmp = n1;
-            n1 = n2 ^ Self::main_step(n1, self.key[index]);
+            n1 = n2 ^ Self::main_step(n1, key);
             n2 = tmp;
         }
         for round in 0..3 {
