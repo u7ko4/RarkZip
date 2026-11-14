@@ -109,3 +109,41 @@ fn decrypts_java_samples_for_all_algorithms() {
         assert_eq!(content, "Hello encryption sample!\nSecond line.\n");
     }
 }
+
+#[test]
+fn encrypts_and_decrypts_extended_algorithms() {
+    let reporter = NoopReporter;
+    for algorithm in [
+        Algorithm::Threefish1024,
+        Algorithm::Shacal2_512,
+        Algorithm::Composite2048,
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("pro.txt");
+        std::fs::write(&input, b"pro round trip\n").unwrap();
+        let encrypted = encrypt_file(
+            &input,
+            "test-password-123",
+            &FileEncryptOptions {
+                algorithm,
+                ..Default::default()
+            },
+            &reporter,
+        )
+        .unwrap_or_else(|error| panic!("{} encrypt: {error}", algorithm.label()));
+        let out_dir = temp.path().join("out");
+        let decrypted = decrypt_file(
+            &encrypted,
+            "test-password-123",
+            &FileDecryptOptions {
+                output_dir: Some(out_dir),
+            },
+            &reporter,
+        )
+        .unwrap_or_else(|error| panic!("{} decrypt: {error}", algorithm.label()));
+        assert_eq!(
+            std::fs::read_to_string(decrypted).unwrap(),
+            "pro round trip\n"
+        );
+    }
+}

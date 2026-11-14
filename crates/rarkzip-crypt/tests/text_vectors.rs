@@ -29,3 +29,30 @@ fn wrong_password_is_rejected() {
     let encoded = std::fs::read_to_string(fixture("0.b64")).unwrap();
     assert!(decrypt_text(&encoded, "wrong-password").is_err());
 }
+
+#[test]
+fn encrypts_and_decrypts_extended_algorithms() {
+    use rarkzip_crypt::algorithm::Algorithm;
+    use rarkzip_crypt::text::{encrypt_text, TextEncryptOptions};
+
+    for algorithm in [
+        Algorithm::Threefish1024,
+        Algorithm::Shacal2_512,
+        Algorithm::Composite2048,
+    ] {
+        assert!(Algorithm::UI.contains(&algorithm));
+        let encoded = encrypt_text(
+            "Extended algorithm round trip",
+            "test-password-123",
+            &TextEncryptOptions {
+                algorithm,
+                compress: false,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{} encrypt: {error}", algorithm.label()));
+        let plaintext = decrypt_text(&encoded, "test-password-123")
+            .unwrap_or_else(|error| panic!("{} decrypt: {error}", algorithm.label()));
+        assert_eq!(plaintext, "Extended algorithm round trip");
+    }
+}
