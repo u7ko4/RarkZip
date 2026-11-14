@@ -15,6 +15,7 @@ pub mod format;
 pub mod hash;
 pub mod iso_backend;
 pub mod lzh_backend;
+pub mod openpgp;
 pub mod password;
 pub mod paths;
 pub mod progress;
@@ -53,6 +54,12 @@ pub use hash::{
     hash_file_with_progress, load_checksum_file, parse_checksum_text, save_checksum_file,
     ChecksumFileEntry, HashAlgorithm,
 };
+pub use openpgp::{
+    format_fingerprint, is_clearsigned, is_signature_file, keys_dir, paired_data_path,
+    paired_signature_path, secret_keys_dir, ImportReport, KeyInfo, Keyring, SecretImportReport,
+    SecretKeyInfo, SecretKeyring, SignReport, SignatureState, VerificationReport,
+    VerifiedSignature,
+};
 pub use password::{PasswordBook, PasswordEntry};
 pub use progress::{NoopSink, PasswordPrompt, Phase, Progress, ProgressSink};
 pub use recovery::{
@@ -61,8 +68,8 @@ pub use recovery::{
 pub use repair::{repair_zip, RepairReport};
 pub use settings::{
     data_dir, passwords_path, settings_path, AdvancedSettings, CompressionSettings,
-    ExtractionSettings, GeneralSettings, HashSettings, SecuritySettings, Settings, UiSettings,
-    ViewSettings,
+    ExtractionSettings, GeneralSettings, HashSettings, SecuritySettings, Settings,
+    SignatureSettings, UiSettings, ViewSettings,
 };
 pub use sfx::{create_sfx, detect_sfx, extract_sfx, SfxConfig, SfxInfo};
 pub use util::{format_ratio, format_size, format_unix_time};

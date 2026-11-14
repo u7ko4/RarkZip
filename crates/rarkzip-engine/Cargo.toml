@@ -25,6 +25,8 @@ libmkiso = "0.1.5"
 lzma-rust2 = { version = "0.16", features = ["std", "encoder"] }
 md-5 = "0.10"
 oxiarc-archive = "0.4.2"
+pgp = { version = "0.17.0", default-features = false }
+rand = "0.8.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sevenz-rust2 = { version = "0.20.2", features = ["deflate", "zstd", "brotli"] }
