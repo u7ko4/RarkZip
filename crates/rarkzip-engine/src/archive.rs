@@ -381,12 +381,25 @@ pub fn verify_archive(
 }
 
 /// 该文件能否快速校验密码；不能时应直接请求用户输入，避免逐个试密造成长时间等待。
+///
+/// ZIP 可快速校验条目密码；7z 仅在头加密时可快速校验（打开头部即可确认）；
+/// 7z 条目加密、RAR 等需要解压条目，不在首层自动试密。
 pub fn supports_quick_password_test(path: &Path) -> bool {
-    let format = probe_archive(path)
+    let Some(format) = probe_archive(path)
         .ok()
         .flatten()
-        .or_else(|| ArchiveFormat::from_extension(path));
-    format.is_some_and(ArchiveFormat::supports_quick_password_test)
+        .or_else(|| ArchiveFormat::from_extension(path))
+    else {
+        return false;
+    };
+    match format {
+        ArchiveFormat::Zip | ArchiveFormat::Zipx => true,
+        ArchiveFormat::SevenZ => matches!(
+            open_archive(path, &OpenOptions::default()),
+            Err(EngineError::PasswordRequired)
+        ),
+        _ => false,
+    }
 }
 
 /// 快速判断密码是否正确；只解最小加密条目，避免整包试跑。

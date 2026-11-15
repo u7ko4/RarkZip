@@ -1278,6 +1278,7 @@ fn encrypted_7z_write_and_read() {
 
     let err = open_archive(&archive, &OpenOptions::default()).unwrap_err();
     assert!(err.is_password_related(), "unexpected error: {err:?}");
+    assert!(rarkzip_engine::supports_quick_password_test(&archive));
     assert!(!test_password(&archive, "wrong").unwrap());
     assert!(test_password(&archive, "seven-secret").unwrap());
     let info = open_archive(
@@ -2006,4 +2007,36 @@ fn nested_header_encrypted_rar_uses_password_book() {
         fs::read(out.join("bundle/header/sample.txt")).unwrap(),
         b"header encrypted rar fixture\n"
     );
+}
+
+#[test]
+fn split_header_encrypted_7z_uses_password_book() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("payload.bin");
+    let content = pseudo_random_bytes(180_000, 0x1357_9BDF);
+    write(&source, &content);
+    let archive = temp.path().join("book.7z");
+    let mut create = options(ArchiveFormat::SevenZ);
+    create.password = Some("book-secret".to_string());
+    create.volume_size = Some(64 * 1024);
+    let outcome =
+        create_archive(std::slice::from_ref(&source), &archive, &create, &NoopSink).unwrap();
+    assert!(outcome.volumes >= 2);
+    assert!(rarkzip_engine::supports_quick_password_test(&outcome.dest));
+
+    let out = temp.path().join("split-book-out");
+    extract_archive(
+        &outcome.dest,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: None,
+            passwords: vec!["wrong-pass".to_string(), "book-secret".to_string()],
+            propagate_motw: false,
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(fs::read(out.join("payload.bin")).unwrap(), content);
 }
