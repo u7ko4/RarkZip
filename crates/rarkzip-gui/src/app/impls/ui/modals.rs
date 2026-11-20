@@ -264,6 +264,8 @@ impl MainView {
                     .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
                     .child(card),
             )
+            // 遮罩铺满整窗，四角要跟着窗口圆。
+            .round_window_corners(window, cx)
             .into_any_element()
     }
 
@@ -543,7 +545,7 @@ impl MainView {
 
     pub(in crate::app) fn render_password_manager_page(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
@@ -906,6 +908,8 @@ impl MainView {
 
         design::page_shell(
             &palette,
+            window,
+            cx,
             "密码管理器",
             "自动试密将按下方顺序执行；手动输入成功的密码会自动追加到末尾",
             design::done_button(
@@ -1018,6 +1022,7 @@ impl MainView {
 
     pub(in crate::app) fn render_password_recovery_page(
         &mut self,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
@@ -1631,6 +1636,8 @@ impl MainView {
 
         design::page_shell_bare(
             &palette,
+            window,
+            cx,
             body,
             Some(
                 div()
@@ -2752,7 +2759,7 @@ impl MainView {
             .child(copy_all)
             .child(export)
             .into_any_element();
-        design::page_shell_bare(&palette, body, Some(footer))
+        design::page_shell_bare(&palette, window, cx, body, Some(footer))
     }
 
     fn hash_rows_text(&self) -> String {
@@ -2952,7 +2959,7 @@ impl MainView {
 
     pub(in crate::app) fn render_new_archive_page(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
@@ -3690,6 +3697,8 @@ impl MainView {
 
         design::page_shell_bare(
             &palette,
+            window,
+            cx,
             vec![layout],
             Some(estimate_bar.into_any_element()),
         )

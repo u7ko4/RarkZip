@@ -289,8 +289,11 @@ pub fn page_head(
 }
 
 /// 功能页整页框架：标题行 + 可滚动内容 + 固定在底部的操作区。
+#[allow(clippy::too_many_arguments)]
 pub fn page_shell(
     palette: &Palette,
+    window: &Window,
+    cx: &App,
     title: impl Into<SharedString>,
     subtitle: impl Into<SharedString>,
     trailing: AnyElement,
@@ -299,6 +302,8 @@ pub fn page_shell(
 ) -> AnyElement {
     page_shell_inner(
         palette,
+        window,
+        cx,
         Some(page_head(palette, title, subtitle, trailing)),
         body,
         footer,
@@ -308,14 +313,18 @@ pub fn page_shell(
 /// 无页头版本：独立窗口已有标题栏，内容直接从页面主体开始。
 pub fn page_shell_bare(
     palette: &Palette,
+    window: &Window,
+    cx: &App,
     body: Vec<AnyElement>,
     footer: Option<AnyElement>,
 ) -> AnyElement {
-    page_shell_inner(palette, None, body, footer)
+    page_shell_inner(palette, window, cx, None, body, footer)
 }
 
 fn page_shell_inner(
     palette: &Palette,
+    window: &Window,
+    cx: &App,
     head: Option<Div>,
     body: Vec<AnyElement>,
     footer: Option<AnyElement>,
@@ -325,6 +334,7 @@ fn page_shell_inner(
         .flex_col()
         .size_full()
         .bg(palette.page)
+        .round_window_corners(window, cx)
         .child(
             div()
                 .id("page-scroll")
@@ -359,6 +369,9 @@ fn page_shell_inner(
                     .bg(palette.bar)
                     .border_t_1()
                     .border_color(palette.line)
+                    // 独立窗口里这条操作栏就是窗口下沿，底部两角要自己圆；
+                    // 主窗口里它上方/下方同色，圆角不可见。
+                    .round_window_bottom(window, cx)
                     .child(
                         div()
                             .w_full()
@@ -1158,36 +1171,144 @@ pub fn settings_content_with_footer(
         .into_any_element()
 }
 
-/// 自绘窗口内容的圆角半径。
+/// 自绘窗口的圆角半径（主题 token）。
 pub const WINDOW_CORNER_RADIUS: f32 = 12.0;
 
-/// 客户端装饰窗口的内容外壳。
+/// 给贴住窗口边缘的元素补上与窗口一致的圆角。
 ///
-/// `gpui-component` 的 Root 插件已经负责阴影、边框、缩放热区和透明留白
-/// （`window_border`），这里只需给内容本身裁出圆角；服务端装饰时原样返回。
-pub fn window_frame(decorations: Decorations, inner: AnyElement) -> AnyElement {
-    let Decorations::Client { tiling } = decorations else {
-        return inner;
-    };
-    let rounding = px(WINDOW_CORNER_RADIUS);
+/// GPUI 只按矩形裁剪子元素，窗口插件的圆角（`WindowBorder`）只能作用于边框、
+/// 阴影和它自己的背景；任何**自带背景**又贴到窗口边缘的元素——整窗根节点、
+/// 顶部标题栏/工具栏、底部状态栏、模态遮罩、页面外壳——都必须自己画圆角，
+/// 否则那块方形背景会把四角重新填成直角。
+///
+/// 半径与平铺状态由 `gpui-component` 的 `window_corner_radii` 给出：服务端
+/// 装饰或对应边被平铺时该角为 0，等价于不做处理，因此可以无条件调用。
+pub trait WindowCorners: Sized {
+    /// 四角都贴住窗口（整窗背景、全屏遮罩）。
+    fn round_window_corners(self, window: &Window, cx: &App) -> Self;
+    /// 只有上沿贴住窗口（标题栏、工具栏、地址栏之上的整宽栏）。
+    fn round_window_top(self, window: &Window, cx: &App) -> Self;
+    /// 只有下沿贴住窗口（状态栏、页面底部操作栏、弹窗底部按钮栏）。
+    fn round_window_bottom(self, window: &Window, cx: &App) -> Self;
+}
 
-    div()
-        .size_full()
-        .flex()
-        .flex_col()
-        .overflow_hidden()
-        .when(!(tiling.top || tiling.right), |this| {
-            this.rounded_tr(rounding)
-        })
-        .when(!(tiling.top || tiling.left), |this| {
-            this.rounded_tl(rounding)
-        })
-        .when(!(tiling.bottom || tiling.right), |this| {
-            this.rounded_br(rounding)
-        })
-        .when(!(tiling.bottom || tiling.left), |this| {
-            this.rounded_bl(rounding)
-        })
-        .child(inner)
-        .into_any_element()
+impl<T: Styled> WindowCorners for T {
+    fn round_window_corners(self, window: &Window, cx: &App) -> Self {
+        let radii = gpui_kit::component::window_corner_radii(window, cx);
+        self.rounded_tl(radii.top_left)
+            .rounded_tr(radii.top_right)
+            .rounded_bl(radii.bottom_left)
+            .rounded_br(radii.bottom_right)
+    }
+
+    fn round_window_top(self, window: &Window, cx: &App) -> Self {
+        let radii = gpui_kit::component::window_corner_radii(window, cx);
+        self.rounded_tl(radii.top_left).rounded_tr(radii.top_right)
+    }
+
+    fn round_window_bottom(self, window: &Window, cx: &App) -> Self {
+        let radii = gpui_kit::component::window_corner_radii(window, cx);
+        self.rounded_bl(radii.bottom_left)
+            .rounded_br(radii.bottom_right)
+    }
+}
+
+/// 客户端装饰在四边留出的阴影宽度，与 `gpui-component` 的 `SHADOW_SIZE` 对齐。
+///
+/// 该值只用于换算窗口外框与内容的尺寸差；真正的阴影绘制与 `set_client_inset`
+/// 仍由 `gpui-component` 的 `window_border` 负责。
+pub const CLIENT_SHADOW: f32 = 20.0;
+
+/// 边缘缩放的命中带半宽，与 `gpui-component` 的 `RESIZE_HIT_SIZE` 对齐。
+const RESIZE_HIT: f32 = 4.0;
+
+/// 当前平台是否会尝试客户端装饰。
+///
+/// 只有 Linux/FreeBSD 需要自绘标题栏；Windows/macOS 仍由系统提供装饰，
+/// 只是把原生标题栏隐藏后由应用接管客户区顶部。
+pub fn wants_client_decorations(custom_titlebar: bool) -> bool {
+    custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"))
+}
+
+/// 把内容尺寸换算成创建窗口用的外框尺寸。
+///
+/// `WindowBounds` 与 `window_min_size` 都以外框为准，客户端装饰会在四边各留
+/// 一条阴影边距；设置里存的是内容尺寸，创建时补回边距才能原样还原。
+pub fn outer_size(width: f32, height: f32, client_decorations: bool) -> Size<Pixels> {
+    let pad = if client_decorations {
+        CLIENT_SHADOW * 2.0
+    } else {
+        0.0
+    };
+    size(px(width + pad), px(height + pad))
+}
+
+/// 当前窗口是否真的拿到了客户端装饰。
+///
+/// 与 [`wants_client_decorations`] 的区别是看运行时的实际结果：Linux 上合成器
+/// 可能拒绝 CSD，此时窗口没有阴影边距，尺寸换算也不能补。
+pub fn is_client_decorated(window: &Window) -> bool {
+    matches!(window.window_decorations(), Decorations::Client { .. })
+}
+
+/// 把内容尺寸换算成 `Window::resize` 需要的外框尺寸。
+pub fn outer_size_for(window: &Window, width: f32, height: f32) -> Size<Pixels> {
+    outer_size(width, height, is_client_decorated(window))
+}
+
+/// 是否应该由应用绘制标题栏。
+///
+/// Linux 上合成器可能拒绝客户端装饰：没有合成器、窗口管理器不认
+/// `_GTK_FRAME_EXTENTS`，或 Wayland 合成器直接回 `ServerSide`。这些情况下
+/// 系统标题栏会自己出现，继续绘制自绘标题栏就会变成两条标题栏，因此必须
+/// 以 `window.window_decorations()` 的实际结果为准，而不是只看设置项。
+pub fn uses_own_titlebar(requested: bool, decorations: Decorations) -> bool {
+    if !requested {
+        return false;
+    }
+    if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+        matches!(decorations, Decorations::Client { .. })
+    } else {
+        true
+    }
+}
+
+/// 客户端装饰窗口的输入区域同步器。
+///
+/// 阴影留白属于 surface 的一部分，但不应接收点击，否则 20px 的透明边框会
+/// 挡住下方窗口。`Window::set_input_region` 只在 Wayland 生效（X11 为空实现），
+/// 并且每次调用都会提交一次 surface，所以这里按尺寸变化去重。
+#[derive(Default)]
+pub struct InputRegionSync {
+    last: Option<(f32, f32, f32, f32)>,
+}
+
+impl InputRegionSync {
+    pub fn sync(&mut self, window: &mut Window) {
+        if !matches!(window.window_decorations(), Decorations::Client { .. }) {
+            return;
+        }
+        // `window_paddings` 已经处理了平铺/最大化时对应边归零的情况。
+        let pad = gpui_kit::component::window_paddings(window);
+        let bounds = window.window_bounds().get_bounds();
+        // 向外多留一个缩放命中带，保证贴边缩放仍然可用。
+        let rect = Bounds {
+            origin: point(pad.left - px(RESIZE_HIT), pad.top - px(RESIZE_HIT)),
+            size: size(
+                bounds.size.width - pad.left - pad.right + px(RESIZE_HIT * 2.0),
+                bounds.size.height - pad.top - pad.bottom + px(RESIZE_HIT * 2.0),
+            ),
+        };
+        let key = (
+            f32::from(rect.origin.x),
+            f32::from(rect.origin.y),
+            f32::from(rect.size.width),
+            f32::from(rect.size.height),
+        );
+        if self.last == Some(key) {
+            return;
+        }
+        self.last = Some(key);
+        window.set_input_region(Some(&[rect]));
+    }
 }

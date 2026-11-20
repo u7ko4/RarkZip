@@ -356,6 +356,9 @@ pub fn apply(cx: &mut App, dark: bool, skin: Skin) {
         theme.mono_font_size = px((ui_font_size() - 0.5).max(9.0));
         theme.radius = px(8.0);
         theme.radius_lg = px(12.0);
+        // 窗口圆角：由 gpui-component 的窗口边框统一作用于边框、阴影孔洞与
+        // 合成器圆角提示；各贴边元素再用 `design::WindowCorners` 自绘同半径。
+        theme.window_radius = px(crate::design::WINDOW_CORNER_RADIUS);
         theme.focus_ring = true;
 
         theme.colors.background = palette.bg;

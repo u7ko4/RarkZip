@@ -1161,7 +1161,9 @@ impl MainView {
                     .take()
                     .unwrap_or_else(|| (current - 200.0).max(980.0))
             };
-            window.resize(size(px(width), px(height)));
+            // `Window::resize` 接受的是外框尺寸，客户端装饰要补回阴影边距。
+            let target = crate::design::outer_size_for(window, width, height);
+            window.resize(target);
         }
         cx.notify();
     }

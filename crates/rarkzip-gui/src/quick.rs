@@ -3,6 +3,7 @@
 //! 流程与设计稿第 6 页一致：选择解压路径 →（加密时）输入密码 →
 //! （同名文件时）冲突确认 → 进度 → 完成。压缩任务直接显示进度。
 
+use crate::design::WindowCorners as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -204,6 +205,8 @@ pub struct QuickView {
     action: QuickAction,
     step: Step,
     custom_titlebar: bool,
+    /// 客户端装饰窗口的输入区域缓存：Wayland 的阴影留白不应接收点击。
+    input_region: crate::design::InputRegionSync,
     dest_input: Entity<InputState>,
     password_input: Entity<InputState>,
     same_name_folder: bool,
@@ -298,6 +301,7 @@ impl QuickView {
             action,
             step,
             custom_titlebar,
+            input_region: crate::design::InputRegionSync::default(),
             dest_input,
             password_input,
             same_name_folder,
@@ -791,8 +795,10 @@ impl QuickView {
             }
             Step::Folder => return,
         };
+        // `Window::resize` 接受的是外框尺寸，客户端装饰要补回阴影边距。
         let _ = self.window_handle.update(cx, |_, window, _| {
-            window.resize(size(px(width), px(height)));
+            let target = crate::design::outer_size_for(window, width, height);
+            window.resize(target);
         });
     }
 
@@ -1157,9 +1163,11 @@ impl QuickView {
     }
 
     fn persist_window_size(&mut self, window: &Window) {
-        if let WindowBounds::Windowed(bounds) = window.window_bounds() {
-            let mut width = bounds.size.width.as_f32();
-            let mut height = bounds.size.height.as_f32();
+        if let WindowBounds::Windowed(_) = window.window_bounds() {
+            // 客户端装饰时外框含阴影留白，记内容尺寸才能原样还原。
+            let inner = window.inner_window_bounds().get_bounds().size;
+            let mut width = inner.width.as_f32();
+            let mut height = inner.height.as_f32();
             // 密码、冲突、完成等步骤会临时调整窗口；关闭时保存不小于基础尺寸的值。
             width = width.max(self.base_size.0);
             height = height.max(self.base_size.1);
@@ -1246,7 +1254,7 @@ impl QuickView {
         }
     }
 
-    fn render_titlebar(&self, window: &Window) -> AnyElement {
+    fn render_titlebar(&self, window: &Window, cx: &App) -> AnyElement {
         let palette = self.palette;
         let title = self.title();
         let max_icon = if window.is_maximized() {
@@ -1321,6 +1329,8 @@ impl QuickView {
                         crate::theme::TITLEBAR_HEIGHT,
                     )),
             )
+            // 标题栏贴着上沿，顶部两角要自己圆。
+            .round_window_top(window, cx)
             .into_any_element()
     }
 
@@ -1379,9 +1389,9 @@ impl QuickView {
             Step::Folder => self.render_folder_step(window, cx),
             Step::Password => self.render_password_step(window, cx),
             Step::Conflict => self.render_conflict_step(cx),
-            Step::Progress => self.render_progress_step(cx),
-            Step::Done => self.render_result_step(true, cx),
-            Step::Failed => self.render_result_step(false, cx),
+            Step::Progress => self.render_progress_step(window, cx),
+            Step::Done => self.render_result_step(true, window, cx),
+            Step::Failed => self.render_result_step(false, window, cx),
         }
     }
 
@@ -2193,7 +2203,7 @@ impl QuickView {
             .into_any_element()
     }
 
-    fn render_progress_step(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_progress_step(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
         let percent = self.percent;
         let current = self.current.clone();
@@ -2382,11 +2392,17 @@ impl QuickView {
                             )),
                     ),
             )
-            .child(footer)
+            // 页脚贴着窗口下沿，底部两角要自己圆。
+            .child(footer.round_window_bottom(window, cx))
             .into_any_element()
     }
 
-    fn render_result_step(&mut self, success: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_result_step(
+        &mut self,
+        success: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let palette = self.palette;
         let title = if success {
             match self.action {
@@ -2536,7 +2552,8 @@ impl QuickView {
                             )),
                     ),
             )
-            .child(footer)
+            // 页脚贴着窗口下沿，底部两角要自己圆。
+            .child(footer.round_window_bottom(window, cx))
             .into_any_element()
     }
 
@@ -2644,8 +2661,12 @@ impl Render for QuickView {
         let palette = self.palette;
         let title = self.title();
         window.set_window_title(&title);
-        let titlebar = self.custom_titlebar.then(|| self.render_titlebar(window));
-        let root = div()
+        // 合成器拒绝客户端装饰时，系统会画出标题栏，自绘标题栏必须让位。
+        let decorations = window.window_decorations();
+        let own_titlebar = crate::design::uses_own_titlebar(self.custom_titlebar, decorations);
+        self.input_region.sync(window);
+        let titlebar = own_titlebar.then(|| self.render_titlebar(window, cx));
+        div()
             .id("quick-root")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -2665,12 +2686,9 @@ impl Render for QuickView {
             .font_family(crate::theme::ui_font_family())
             .when_some(titlebar, |this, titlebar| this.child(titlebar))
             .child(self.render_body(window, cx))
-            .into_any_element();
-
-        if !self.custom_titlebar {
-            return root;
-        }
-        crate::design::window_frame(window.window_decorations(), root)
+            // 整窗背景贴住四角，必须自己圆角。
+            .round_window_corners(window, cx)
+            .into_any_element()
     }
 }
 

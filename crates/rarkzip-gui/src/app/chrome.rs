@@ -17,6 +17,9 @@ impl MainView {
         let show_button = |key: &str| !hidden_buttons.iter().any(|hidden| hidden == key);
         let toolbar_icon_size = self.settings.view.toolbar_icon_size.clamp(14.0, 24.0);
         let toolbar_height = self.settings.view.toolbar_height.clamp(40.0, 64.0);
+        // 以平台实际装饰为准：合成器拒绝客户端装饰时，窗口按钮与拖拽区要交还给系统标题栏。
+        let own_titlebar =
+            crate::design::uses_own_titlebar(self.custom_titlebar, window.window_decorations());
 
         let icon_button = |id: &'static str, name: IconName, tip: &'static str| {
             Button::new(id)
@@ -177,7 +180,7 @@ impl MainView {
                 )
             });
 
-        let controls = if self.custom_titlebar {
+        let controls = if own_titlebar {
             let max_icon = if window.is_maximized() {
                 IconName::Copy
             } else {
@@ -221,7 +224,7 @@ impl MainView {
             .gap(px(3.0))
             .h(px(toolbar_height))
             .pl(px(12.0))
-            .pr(px(if self.custom_titlebar { 0.0 } else { 12.0 }))
+            .pr(px(if own_titlebar { 0.0 } else { 12.0 }))
             .bg(palette.bar)
             .border_b_1()
             .border_color(palette.line)
@@ -231,7 +234,7 @@ impl MainView {
                     .id("top-drag-area")
                     .flex_1()
                     .h_full()
-                    .when(self.custom_titlebar, |this| {
+                    .when(own_titlebar, |this| {
                         this.window_control_area(WindowControlArea::Drag)
                     })
                     .on_mouse_down(
@@ -263,6 +266,8 @@ impl MainView {
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
             )
             .when_some(controls, |this, controls| this.child(controls))
+            // 工具栏贴着窗口上沿，顶部两角要自己圆。
+            .round_window_top(window, cx)
             .into_any_element()
     }
 
@@ -306,7 +311,7 @@ impl MainView {
         &mut self,
         feature: FeatureWindow,
         window: &Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
         let max_icon = if window.is_maximized() {
@@ -382,6 +387,8 @@ impl MainView {
                         crate::theme::TITLEBAR_HEIGHT,
                     )),
             )
+            // 独立窗口的标题栏贴着上沿，顶部两角要自己圆。
+            .round_window_top(window, cx)
             .into_any_element()
     }
 

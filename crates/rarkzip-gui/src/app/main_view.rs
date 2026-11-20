@@ -1388,7 +1388,11 @@ impl MainView {
         panel.into_any_element()
     }
 
-    pub(crate) fn render_status_bar(&mut self, _cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_status_bar(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let palette = self.palette;
         let active = self.active_progress();
         let mut bar = div()
@@ -1485,6 +1489,8 @@ impl MainView {
                         tr(self.language, "双击进入 · F2 重命名 · Ctrl+E 解压")
                     }),
             )
+            // 状态栏贴着窗口下沿，底部两角要自己圆。
+            .round_window_bottom(window, cx)
             .into_any_element()
     }
 }

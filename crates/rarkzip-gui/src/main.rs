@@ -223,8 +223,7 @@ fn main() -> std::process::ExitCode {
     // Linux 没有原生的透明标题栏：自绘标题栏需要客户端装饰，窗口背景也要
     // 透明才能在圆角/阴影外框周围留白。Windows/macOS 继续沿用系统标题栏
     // 的隐藏方式。
-    let client_decorations =
-        custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"));
+    let client_decorations = design::wants_client_decorations(custom_titlebar);
     let window_background = if client_decorations {
         WindowBackgroundAppearance::Transparent
     } else {
@@ -237,7 +236,14 @@ fn main() -> std::process::ExitCode {
             .map(app::FeatureWindow::title)
             .unwrap_or("RarkZip")
     };
-    let window_size = size(px(width), px(height));
+    // 设置里存的是内容尺寸，创建时按平台装饰补上阴影边距。
+    let window_size = design::outer_size(width, height, client_decorations);
+    let (min_width, min_height) = if quick_action.is_some() {
+        (480.0, 350.0)
+    } else {
+        (520.0, 420.0)
+    };
+    let window_min_size = design::outer_size(min_width, min_height, client_decorations);
     // 恢复上次关闭时的窗口位置；首次启动仍使用左上角附近的默认位置。
     let main_origin = match (settings.ui.window_x, settings.ui.window_y) {
         (Some(x), Some(y)) if x.is_finite() && y.is_finite() => point(
@@ -273,11 +279,7 @@ fn main() -> std::process::ExitCode {
                     WindowDecorations::Server
                 }),
                 // 快速解压/压缩弹窗按内容收紧高度，允许比主窗口更矮。
-                window_min_size: Some(if quick_action.is_some() {
-                    size(px(480.0), px(350.0))
-                } else {
-                    size(px(520.0), px(420.0))
-                }),
+                window_min_size: Some(window_min_size),
                 ..Default::default()
             };
             let path = initial_path.clone();

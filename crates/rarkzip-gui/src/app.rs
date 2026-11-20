@@ -1,3 +1,4 @@
+use crate::design::WindowCorners as _;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -619,6 +620,8 @@ pub struct MainView {
     last_title: String,
     /// 构造窗口时使用的标题栏模式（GPUI 的透明标题栏只能在创建时指定）。
     custom_titlebar: bool,
+    /// 客户端装饰窗口的输入区域缓存：Wayland 的阴影留白不应接收点击。
+    input_region: design::InputRegionSync,
     /// 独立功能窗口标记；None 表示主窗口。
     feature_window: Option<FeatureWindow>,
     /// 独立窗口内“开始压缩”后的结果状态。
@@ -878,6 +881,7 @@ impl MainView {
                 .map(|feature| feature.title().to_string())
                 .unwrap_or_else(|| "RarkZip".to_string()),
             custom_titlebar,
+            input_region: design::InputRegionSync::default(),
             feature_window,
             feature_result: None,
         };
@@ -1869,11 +1873,10 @@ impl MainView {
         let width = persisted.ui.window_width.clamp(520.0, 3840.0);
         let height = persisted.ui.window_height.clamp(420.0, 2160.0);
         let custom_titlebar = self.settings.view.use_custom_titlebar;
-        let client_decorations =
-            custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"));
+        let client_decorations = design::wants_client_decorations(custom_titlebar);
         let window_bounds = WindowBounds::Windowed(Bounds {
             origin: point(px(80.0), px(80.0)),
-            size: size(px(width), px(height)),
+            size: design::outer_size(width, height, client_decorations),
         });
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
@@ -1915,9 +1918,9 @@ impl MainView {
         self.settings.ui.window_sizes = persisted.ui.window_sizes.clone();
         let (width, height) = persisted.window_size(feature.key(), feature.size());
         let custom_titlebar = self.settings.view.use_custom_titlebar;
-        let client_decorations =
-            custom_titlebar && cfg!(any(target_os = "linux", target_os = "freebsd"));
-        let bounds = WindowBounds::centered(size(px(width), px(height)), cx);
+        let client_decorations = design::wants_client_decorations(custom_titlebar);
+        let bounds =
+            WindowBounds::centered(design::outer_size(width, height, client_decorations), cx);
         let options = WindowOptions {
             window_bounds: Some(bounds),
             window_background: if client_decorations {
@@ -1977,8 +1980,10 @@ impl MainView {
         if let WindowBounds::Windowed(bounds) = window.window_bounds() {
             let x = bounds.origin.x.as_f32();
             let y = bounds.origin.y.as_f32();
-            let width = bounds.size.width.as_f32();
-            let height = bounds.size.height.as_f32();
+            // 客户端装饰时外框含 20px 阴影留白，存内容尺寸才能跨平台一致。
+            let inner = window.inner_window_bounds().get_bounds().size;
+            let width = inner.width.as_f32();
+            let height = inner.height.as_f32();
             self.settings.ui.window_x = Some(x);
             self.settings.ui.window_y = Some(y);
             self.settings.ui.window_width = width;
@@ -1989,9 +1994,11 @@ impl MainView {
     }
 
     fn save_feature_window_state(&mut self, window: &Window, feature: FeatureWindow) {
-        if let WindowBounds::Windowed(bounds) = window.window_bounds() {
-            let width = bounds.size.width.as_f32();
-            let height = bounds.size.height.as_f32();
+        if let WindowBounds::Windowed(_) = window.window_bounds() {
+            // 与主窗口一致：客户端装饰时记住内容尺寸，还原时再补阴影边距。
+            let inner = window.inner_window_bounds().get_bounds().size;
+            let width = inner.width.as_f32();
+            let height = inner.height.as_f32();
             self.settings
                 .remember_window_size(feature.key(), width, height);
             let _ = Settings::persist_window_size(feature.key(), width, height);
@@ -2301,15 +2308,13 @@ fn create_detail(outcome: &CreateOutcome) -> String {
 }
 
 impl MainView {
-    /// 自绘标题栏时，给整个窗口内容裁出圆角。
+    /// 自绘标题栏时同步窗口输入区域。
     ///
-    /// 阴影、边框与缩放热区由 `gpui-component` 的窗口插件负责；只有平台
-    /// 确实使用客户端装饰（Linux 合成器可用）时才裁剪，其他平台保持原样。
-    fn frame_window(&self, window: &mut Window, inner: AnyElement) -> AnyElement {
-        if !self.custom_titlebar {
-            return inner;
-        }
-        design::window_frame(window.window_decorations(), inner)
+    /// 阴影、边框、圆角与缩放热区由 `gpui-component` 的窗口插件负责；这里
+    /// 只负责让 Wayland 的阴影留白不接收点击。
+    fn frame_window(&mut self, window: &mut Window, inner: AnyElement) -> AnyElement {
+        self.input_region.sync(window);
+        inner
     }
 }
 
@@ -2331,7 +2336,7 @@ impl Render for MainView {
             Page::Settings => self.render_settings(window, cx),
             Page::NewArchive => self.render_new_archive_page(window, cx),
             Page::PasswordManager => self.render_password_manager_page(window, cx),
-            Page::PasswordRecovery => self.render_password_recovery_page(cx),
+            Page::PasswordRecovery => self.render_password_recovery_page(window, cx),
             Page::Hash => self.render_hash_page(window, cx),
         };
         // 任务中心、设置以及各功能页使用整页布局，不再显示归档地址栏与搜索框；
@@ -2391,7 +2396,7 @@ impl Render for MainView {
             .child(self.render_top_bar(window, cx))
             .when_some(address_bar, |this, address_bar| this.child(address_bar))
             .child(div().flex().flex_1().min_h_0().child(content))
-            .child(self.render_status_bar(cx))
+            .child(self.render_status_bar(window, cx))
             .when_some(archive_context, |this, menu| this.child(menu))
             .when(self.menu_open, |this| {
                 this.child(self.render_app_menu(window, cx))
@@ -2410,6 +2415,8 @@ impl Render for MainView {
             .when_some(modal, |this, modal| {
                 this.child(self.render_modal(modal, window, cx))
             })
+            // 整窗背景贴住四个角，必须自己圆角，否则会把边框的圆角填成直角。
+            .round_window_corners(window, cx)
             .into_any_element();
 
         self.frame_window(window, root)
@@ -2549,9 +2556,10 @@ impl MainView {
             return div().into_any_element();
         };
         let palette = self.palette;
-        let titlebar = self
-            .custom_titlebar
-            .then(|| self.render_feature_titlebar(feature, window, cx));
+        // 合成器可能拒绝客户端装饰，此时系统标题栏会出现，必须让出自绘标题栏。
+        let own_titlebar =
+            design::uses_own_titlebar(self.custom_titlebar, window.window_decorations());
+        let titlebar = own_titlebar.then(|| self.render_feature_titlebar(feature, window, cx));
         let content = match feature {
             FeatureWindow::NewArchive => {
                 if self.new_draft.is_some() {
@@ -2560,7 +2568,7 @@ impl MainView {
                     self.render_new_archive_progress(window, cx)
                 }
             }
-            FeatureWindow::PasswordRecovery => self.render_password_recovery_page(cx),
+            FeatureWindow::PasswordRecovery => self.render_password_recovery_page(window, cx),
             FeatureWindow::Hash => self.render_hash_page(window, cx),
         };
         // 独立窗口同样需要下拉层、模态框、Toast 与拖放处理，
@@ -2610,13 +2618,15 @@ impl MainView {
                 this.child(self.render_modal(modal, window, cx))
             })
             .when_some(hash_menu, |this, menu| this.child(menu))
+            // 独立窗口的整窗背景同样贴住四角。
+            .round_window_corners(window, cx)
             .into_any_element()
     }
 
     /// 独立“新建压缩包”窗口中的进度与结果视图。
     fn render_new_archive_progress(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = self.palette;
@@ -2828,7 +2838,7 @@ impl MainView {
                 )
                 .into_any_element()
         };
-        design::page_shell_bare(&palette, vec![body], None)
+        design::page_shell_bare(&palette, window, cx, vec![body], None)
     }
 
     fn render_entry_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
