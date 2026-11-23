@@ -3,6 +3,7 @@
 //! 流程与设计稿第 6 页一致：选择解压路径 →（加密时）输入密码 →
 //! （同名文件时）冲突确认 → 进度 → 完成。压缩任务直接显示进度。
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,7 @@ use gpui_kit::*;
 use rarkzip_engine::{
     create_archive, extract_archive, format_size, open_archive, ArchiveFormat, Codepage,
     CreateOptions, EngineError, ExtractMode, ExtractOptions, OpenOptions, PasswordBook,
-    PasswordPrompt, ProgressSink, Settings, ZipAlgorithm,
+    PasswordPrompt, Phase, ProgressSink, Settings, ZipAlgorithm,
 };
 
 use crate::components::*;
@@ -142,6 +143,9 @@ enum QuickEvent {
     },
     Progress {
         percent: f32,
+        phase: Phase,
+        done: u64,
+        total: u64,
         current: String,
     },
     Extracted {
@@ -160,6 +164,32 @@ enum QuickEvent {
 struct QuickControl {
     cancelled: AtomicBool,
     paused: AtomicBool,
+}
+
+/// 右键快速任务的诊断日志。进度长时间不动时，日志能看出卡在哪个阶段/文件。
+fn quick_task_log(line: &str) {
+    let directory = rarkzip_engine::settings::data_dir();
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let path = directory.join("quick-task.log");
+    if std::fs::metadata(&path)
+        .map(|meta| meta.len() > 4 * 1024 * 1024)
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            file,
+            "[{}] {line}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
+    }
 }
 
 struct QuickSink {
@@ -189,8 +219,19 @@ impl ProgressSink for QuickSink {
         let mut last = self.last_percent.lock().unwrap();
         if (percent - *last).abs() >= 0.5 || percent >= 100.0 {
             *last = percent;
+            quick_task_log(&format!(
+                "progress {} {:.1}% {}/{} {}",
+                progress.phase.label(),
+                percent,
+                progress.done,
+                progress.total,
+                progress.current
+            ));
             let _ = self.sender.send(QuickEvent::Progress {
                 percent,
+                phase: progress.phase,
+                done: progress.done,
+                total: progress.total,
                 current: progress.current.clone(),
             });
         }
@@ -263,6 +304,11 @@ pub struct QuickView {
     prepared_selected: Option<Vec<usize>>,
     total_entries: usize,
     percent: f32,
+    phase: Option<Phase>,
+    done_bytes: u64,
+    total_bytes: u64,
+    speed_bps: f64,
+    last_progress: Option<(Instant, u64)>,
     current: String,
     paused: bool,
     result_text: Option<String>,
@@ -386,6 +432,11 @@ impl QuickView {
             prepared_selected: None,
             total_entries: 0,
             percent: 0.0,
+            phase: None,
+            done_bytes: 0,
+            total_bytes: 0,
+            speed_bps: 0.0,
+            last_progress: None,
             current: String::new(),
             paused: false,
             result_text: None,
@@ -437,7 +488,21 @@ impl QuickView {
                 .await;
             let alive = weak
                 .update(cx, |view, cx| {
-                    view.drain_events(cx);
+                    let mut changed = view.drain_events(cx);
+                    // 单条大文件解压时后端可能很久不回报百分比；让“已用”
+                    // 计时器独立走动，避免窗口看起来完全卡死。
+                    if view.running {
+                        if let Some(started) = view.started {
+                            let secs = started.elapsed().as_secs();
+                            if secs != view.elapsed_secs {
+                                view.elapsed_secs = secs;
+                                changed = true;
+                            }
+                        }
+                    }
+                    if changed {
+                        cx.notify();
+                    }
                     true
                 })
                 .unwrap_or(false);
@@ -448,20 +513,19 @@ impl QuickView {
         .detach();
     }
 
-    fn drain_events(&mut self, cx: &mut Context<Self>) {
+    fn drain_events(&mut self, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
         while let Ok(event) = self.receiver.try_recv() {
             self.handle_event(event, cx);
             changed = true;
         }
-        if changed {
-            cx.notify();
-        }
+        changed
     }
 
     fn handle_event(&mut self, event: QuickEvent, cx: &mut Context<Self>) {
         match event {
             QuickEvent::NeedPassword => {
+                quick_task_log("need-password");
                 self.running = false;
                 self.step = Step::Password;
                 self.password_picker_open = false;
@@ -474,6 +538,12 @@ impl QuickView {
             QuickEvent::PasswordPrompt { prompt, responder } => {
                 // 工作线程已在等待回复：此时不能重启解压，提交后直接把
                 // 密码送回引擎，让嵌套/首层流程原地继续。
+                quick_task_log(&format!(
+                    "password-prompt nested={} attempt={} archive={}",
+                    prompt.nested,
+                    prompt.attempt,
+                    prompt.archive.display()
+                ));
                 self.running = false;
                 self.password_attempted = prompt.attempt > 1;
                 self.password_error =
@@ -515,6 +585,7 @@ impl QuickView {
                 if password.is_some() {
                     self.password = password;
                 }
+                self.total_entries = all_indices.len();
                 self.smart_dest = Some(dest.clone());
                 self.active_dest = Some(dest);
                 self.smart_conflicts = conflicts;
@@ -530,14 +601,43 @@ impl QuickView {
                     self.resize_for_step(cx);
                 }
             }
-            QuickEvent::Progress { percent, current } => {
+            QuickEvent::Progress {
+                percent,
+                phase,
+                done,
+                total,
+                current,
+            } => {
+                let now = Instant::now();
+                if let Some((last_time, last_done)) = self.last_progress {
+                    let seconds = now.duration_since(last_time).as_secs_f64();
+                    if done < last_done || total != self.total_bytes {
+                        // 进入下一个嵌套包时后端百分比/字节数会从头开始。
+                        self.speed_bps = 0.0;
+                    } else if seconds >= 0.2 && done > last_done {
+                        let instant = (done - last_done) as f64 / seconds;
+                        self.speed_bps = if self.speed_bps > 0.0 {
+                            self.speed_bps * 0.7 + instant * 0.3
+                        } else {
+                            instant
+                        };
+                    }
+                }
+                self.last_progress = Some((now, done));
                 self.percent = percent;
+                self.phase = Some(phase);
+                self.done_bytes = done;
+                self.total_bytes = total;
                 self.elapsed_secs = self.started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 if !current.is_empty() {
                     self.current = current;
                 }
             }
             QuickEvent::Extracted { dest, files, bytes } => {
+                quick_task_log(&format!(
+                    "done files={files} bytes={bytes} dest={}",
+                    dest.display()
+                ));
                 self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Done;
@@ -580,6 +680,7 @@ impl QuickView {
                 return;
             }
             QuickEvent::Failed(error) => {
+                quick_task_log(&format!("failed {error}"));
                 self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Failed;
@@ -587,6 +688,7 @@ impl QuickView {
                 self.resize_for_step(cx);
             }
             QuickEvent::Cancelled => {
+                quick_task_log("cancelled");
                 self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Failed;
@@ -1066,11 +1168,17 @@ impl QuickView {
         self.running = true;
         self.step = Step::Progress;
         self.percent = 0.0;
-        self.current = current;
+        self.phase = None;
+        self.done_bytes = 0;
+        self.total_bytes = 0;
+        self.speed_bps = 0.0;
+        self.last_progress = None;
+        self.current = current.clone();
         self.started = Some(Instant::now());
         self.elapsed_secs = 0;
         self.error = None;
         self.control = Arc::new(QuickControl::default());
+        quick_task_log(&format!("start {:?} ({current})", self.action));
         self.resize_for_step(cx);
     }
 
@@ -2499,12 +2607,47 @@ impl QuickView {
         } else {
             palette.accent
         };
+        let last_progress_stale = self
+            .last_progress
+            .is_some_and(|(at, _)| at.elapsed() >= Duration::from_secs(5));
         let status = if paused {
             self.localized("已暂停")
-        } else if is_extract {
-            self.localized("正在解压")
+        } else if self.running && last_progress_stale {
+            // 单条大文件/慢速嵌套包可能长时间不刷新百分比；明确提示仍在处理。
+            self.localized("处理中…")
         } else {
-            self.localized("正在压缩")
+            match self.phase {
+                Some(Phase::Nested) => self.localized("嵌套解压"),
+                Some(Phase::Scanning) => self.localized("安全扫描"),
+                Some(Phase::Password) => self.localized("尝试密码"),
+                Some(Phase::Preparing) => self.localized("准备中"),
+                Some(Phase::Testing) => self.localized("校验中"),
+                Some(Phase::Hashing) => self.localized("计算哈希"),
+                Some(Phase::Compressing) => self.localized("正在压缩"),
+                Some(Phase::Finished) => self.localized("完成"),
+                _ if is_extract => self.localized("正在解压"),
+                _ => self.localized("正在压缩"),
+            }
+        };
+        let processed = if self.total_bytes > 0 {
+            format!(
+                "{} / {}",
+                format_size(self.done_bytes),
+                format_size(self.total_bytes)
+            )
+        } else {
+            String::new()
+        };
+        let speed = if self.speed_bps >= 1.0 {
+            format!("{}/s", format_size(self.speed_bps as u64))
+        } else {
+            String::new()
+        };
+        let detail = match (processed.is_empty(), speed.is_empty()) {
+            (false, false) => format!("{processed} · {speed}"),
+            (false, true) => processed,
+            (true, false) => speed,
+            (true, true) => String::new(),
         };
         let item_count = if is_extract {
             total_entries
@@ -2601,6 +2744,15 @@ impl QuickView {
                             ),
                     )
                     .child(thick_bar(percent, 18.0, bar_color, &palette))
+                    .when(!detail.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.muted)
+                                .child(detail),
+                        )
+                    })
                     .child(
                         div()
                             .flex_shrink_0()

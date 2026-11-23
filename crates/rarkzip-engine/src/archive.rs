@@ -130,7 +130,7 @@ fn resolve_payload(path: &Path) -> Result<PayloadResolution> {
         });
     }
 
-    if let Some(set) = set {
+    if set.is_some() {
         // 名称里有归档标记，或第一卷内容本身就是归档，才按分卷处理；
         // `IMG001.jpg / IMG002.jpg` 这样的同名序号文件不会被误合并。
         let sniffed = crate::sniff::sniff(first)?;
@@ -139,10 +139,11 @@ fn resolve_payload(path: &Path) -> Result<PayloadResolution> {
         let content_archive = sniffed
             .as_ref()
             .is_some_and(|sniffed| sniffed.format != ArchiveFormat::Unknown);
-        if set.is_rar()
-            || sniffed
-                .as_ref()
-                .is_some_and(|sniffed| sniffed.format == ArchiveFormat::Rar)
+        // 是否按 RAR 分卷读取以内容为准：`part1.r删ar除` 之类的伪装名
+        // 无法靠扩展名判断，而普通 part1.jpg/part2.jpg 不能被误当 RAR。
+        if sniffed
+            .as_ref()
+            .is_some_and(|sniffed| sniffed.format == ArchiveFormat::Rar)
         {
             let first_part = crate::rar_backend::first_part(first);
             return Ok(PayloadResolution {

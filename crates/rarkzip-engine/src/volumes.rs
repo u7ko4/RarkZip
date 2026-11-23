@@ -77,33 +77,27 @@ pub fn detect(path: &Path) -> Result<Option<VolumeSet>> {
 
 fn detect_rar_parts(parent: &Path, name: &str) -> Result<Option<VolumeSet>> {
     let lower = name.to_ascii_lowercase();
-    let Some(rar_pos) = lower.find(".rar") else {
-        return Ok(None);
-    };
-    // `.rar` 之后只能是空或另一个伪装扩展名（如 `.mp4`）。
-    let after_rar = &name[rar_pos + 4..];
-    if !after_rar.is_empty() && !after_rar.starts_with('.') {
-        return Ok(None);
+    // WinRAR 分卷的核心是 `part<数字>`，扩展名可能被改成任意伪装形式
+    // （例如 `part1.r删ar除`），因此不要求结尾必须是 `.rar`。
+    for (part_pos, _) in lower.match_indices("part") {
+        let digits_start = part_pos + 4;
+        let digits_end = name[digits_start..]
+            .find(|ch: char| !ch.is_ascii_digit())
+            .map(|offset| digits_start + offset)
+            .unwrap_or(name.len());
+        let digits = &name[digits_start..digits_end];
+        if digits.is_empty() || digits.len() > 4 {
+            continue;
+        }
+        let width = digits.len();
+        let prefix = name[..part_pos].to_string();
+        let suffix = name[digits_end..].to_string();
+        let members = consecutive_members(parent, &prefix, "part", width, 1, 999, &suffix);
+        if let Some(set) = build_set(members, name, VolumeKind::RarParts, prefix, suffix) {
+            return Ok(Some(set));
+        }
     }
-    let before_lower = &lower[..rar_pos];
-    let Some(part_pos) = before_lower.rfind("part") else {
-        return Ok(None);
-    };
-    let digits = &name[part_pos + 4..rar_pos];
-    if digits.is_empty() || digits.len() > 4 || !digits.chars().all(|ch| ch.is_ascii_digit()) {
-        return Ok(None);
-    }
-    let width = digits.len();
-    let prefix = name[..part_pos].to_string();
-    let suffix = name[rar_pos..].to_string();
-    let members = consecutive_members(parent, &prefix, "part", width, 1, 999, &suffix);
-    Ok(build_set(
-        members,
-        name,
-        VolumeKind::RarParts,
-        prefix,
-        suffix,
-    ))
+    Ok(None)
 }
 
 fn detect_rar_classic(parent: &Path, name: &str) -> Result<Option<VolumeSet>> {
@@ -544,5 +538,32 @@ mod tests {
         assert!(!looks_like_archive_volume_name(
             &temp.path().join("IMG_001.jpg")
         ));
+    }
+}
+
+#[cfg(test)]
+mod rar_part_tests {
+    use super::*;
+    use std::fs;
+
+    fn touch(directory: &Path, name: &str) {
+        fs::write(directory.join(name), b"x").unwrap();
+    }
+
+    #[test]
+    fn detects_rar_parts_with_masked_extensions() {
+        let temp = tempfile::tempdir().unwrap();
+        touch(temp.path(), "collection.part1.r删ar除");
+        touch(temp.path(), "collection.part2.r删ar除");
+        touch(temp.path(), "collection.part3.r删ar除");
+
+        let set = detect(&temp.path().join("collection.part2.r删ar除"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(set.kind, VolumeKind::RarParts);
+        assert_eq!(set.index, 1);
+        assert_eq!(set.members.len(), 3);
+        assert!(is_continuation(&temp.path().join("collection.part2.r删ar除")).unwrap());
+        assert!(!is_continuation(&temp.path().join("collection.part1.r删ar除")).unwrap());
     }
 }

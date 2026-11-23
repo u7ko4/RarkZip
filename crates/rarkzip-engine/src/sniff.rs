@@ -14,6 +14,7 @@ const ZIP_LOCAL: &[u8; 4] = b"PK\x03\x04";
 const ZIP_EOCD: &[u8; 4] = b"PK\x05\x06";
 const ZIP_SPANNED: &[u8; 4] = b"PK\x07\x08";
 const ZIP64_EOCD: &[u8; 4] = b"PK\x06\x06";
+const ZIP64_LOCATOR: &[u8; 4] = b"PK\x06\x07";
 const SEVEN_Z: &[u8; 6] = b"7z\xBC\xAF\x27\x1C";
 const RAR4: &[u8; 7] = b"Rar!\x1A\x07\x00";
 const RAR5: &[u8; 8] = b"Rar!\x1A\x07\x01\x00";
@@ -232,6 +233,13 @@ fn find_zip_payload(path: &Path, file_len: u64) -> Result<Option<u64>> {
 
 /// 返回（按载荷相对偏移推算的起点，中央目录的绝对位置）。
 fn eocd_payload(tail: &[u8], index: usize, tail_start: u64) -> Option<(u64, u64)> {
+    // ZIP64 的中央目录后面还紧跟 ZIP64 结束记录和定位器，不能直接用
+    // 经典 EOCD 减去 cd_size 推导中央目录位置。优先用定位器定位 ZIP64
+    // 结束记录，并从它的绝对位置反推归档起点。
+    if let Some((payload, central_absolute)) = zip64_eocd_payload(tail, index, tail_start) {
+        return Some((payload, central_absolute));
+    }
+
     let eocd_abs = tail_start + index as u64;
     let mut cd_size = u32::from_le_bytes(tail[index + 12..index + 16].try_into().ok()?) as u64;
     let mut cd_offset = u32::from_le_bytes(tail[index + 16..index + 20].try_into().ok()?) as u64;
@@ -260,6 +268,40 @@ fn eocd_payload(tail: &[u8], index: usize, tail_start: u64) -> Option<(u64, u64)
         return Some((u64::MAX, central_absolute));
     }
     Some((eocd_abs - cd_size - cd_offset, central_absolute))
+}
+
+/// 通过经典 EOCD 前的 ZIP64 定位器找到 ZIP64 结束记录。
+///
+/// 有些工具即使大小/偏移未超过 4 GiB，也会写入 ZIP64 结束记录；此时
+/// 经典 EOCD 的字段不是 0xFFFFFFFF，但 ZIP64 记录才是准确的位置来源。
+fn zip64_eocd_payload(tail: &[u8], eocd_index: usize, tail_start: u64) -> Option<(u64, u64)> {
+    let locator_index = eocd_index.checked_sub(20)?;
+    if tail.get(locator_index..locator_index + 4)? != ZIP64_LOCATOR {
+        return None;
+    }
+    let locator_abs = tail_start + locator_index as u64;
+    let mut position = locator_index.saturating_sub(4);
+    loop {
+        if position + 56 <= tail.len() && &tail[position..position + 4] == ZIP64_EOCD {
+            let record_size =
+                u64::from_le_bytes(tail[position + 4..position + 12].try_into().ok()?);
+            let start_abs = tail_start + position as u64;
+            let end_abs = start_abs.checked_add(12)?.checked_add(record_size)?;
+            if end_abs == locator_abs {
+                let cd_size =
+                    u64::from_le_bytes(tail[position + 40..position + 48].try_into().ok()?);
+                let cd_offset =
+                    u64::from_le_bytes(tail[position + 48..position + 56].try_into().ok()?);
+                let central_absolute = start_abs.checked_sub(cd_size)?;
+                let payload = central_absolute.checked_sub(cd_offset)?;
+                return Some((payload, central_absolute));
+            }
+        }
+        if position == 0 {
+            return None;
+        }
+        position -= 1;
+    }
 }
 
 /// 读取中央目录首个条目记录的本地头绝对偏移，用于识别偏移已按 EXE 起点修正的 SFX。
@@ -399,5 +441,55 @@ pub fn ensure_supported(result: &SniffResult) -> Result<()> {
             "无法识别的归档内容".to_string(),
         )),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zip64_payload_uses_locator_record_position() {
+        let mut tail = vec![0u8; 1200];
+        let zip64 = 1000usize;
+        tail[zip64..zip64 + 4].copy_from_slice(ZIP64_EOCD);
+        tail[zip64 + 4..zip64 + 12].copy_from_slice(&44u64.to_le_bytes());
+        tail[zip64 + 40..zip64 + 48].copy_from_slice(&73u64.to_le_bytes());
+        tail[zip64 + 48..zip64 + 56].copy_from_slice(&500u64.to_le_bytes());
+
+        let locator = zip64 + 56;
+        tail[locator..locator + 4].copy_from_slice(ZIP64_LOCATOR);
+
+        let eocd = locator + 20;
+        tail[eocd..eocd + 4].copy_from_slice(ZIP_EOCD);
+        // 经典 EOCD 字段不是 0xFFFFFFFF，但 ZIP64 记录仍存在且才是准确的
+        // 位置来源。
+        tail[eocd + 12..eocd + 16].copy_from_slice(&73u32.to_le_bytes());
+        tail[eocd + 16..eocd + 20].copy_from_slice(&500u32.to_le_bytes());
+
+        let (payload, central_absolute) = eocd_payload(&tail, eocd, 0).unwrap();
+        assert_eq!(central_absolute, 1000 - 73);
+        assert_eq!(payload, 1000 - 73 - 500);
+    }
+
+    #[test]
+    fn zip64_payload_handles_a_tail_window_offset() {
+        let mut tail = vec![0u8; 1200];
+        let zip64 = 1000usize;
+        tail[zip64..zip64 + 4].copy_from_slice(ZIP64_EOCD);
+        tail[zip64 + 4..zip64 + 12].copy_from_slice(&44u64.to_le_bytes());
+        tail[zip64 + 40..zip64 + 48].copy_from_slice(&73u64.to_le_bytes());
+        tail[zip64 + 48..zip64 + 56].copy_from_slice(&500u64.to_le_bytes());
+        let locator = zip64 + 56;
+        tail[locator..locator + 4].copy_from_slice(ZIP64_LOCATOR);
+        let eocd = locator + 20;
+        tail[eocd..eocd + 4].copy_from_slice(ZIP_EOCD);
+        tail[eocd + 12..eocd + 16].copy_from_slice(&73u32.to_le_bytes());
+        tail[eocd + 16..eocd + 20].copy_from_slice(&500u32.to_le_bytes());
+
+        let tail_start = 10_000_000u64;
+        let (payload, central_absolute) = eocd_payload(&tail, eocd, tail_start).unwrap();
+        assert_eq!(central_absolute, tail_start + 1000 - 73);
+        assert_eq!(payload, tail_start + 1000 - 73 - 500);
     }
 }
