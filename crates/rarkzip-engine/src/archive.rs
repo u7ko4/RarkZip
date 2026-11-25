@@ -130,7 +130,7 @@ fn resolve_payload(path: &Path) -> Result<PayloadResolution> {
         });
     }
 
-    if let Some(set) = set {
+    if set.is_some() {
         // 名称里有归档标记，或第一卷内容本身就是归档，才按分卷处理；
         // `IMG001.jpg / IMG002.jpg` 这样的同名序号文件不会被误合并。
         let sniffed = crate::sniff::sniff(first)?;
@@ -139,10 +139,11 @@ fn resolve_payload(path: &Path) -> Result<PayloadResolution> {
         let content_archive = sniffed
             .as_ref()
             .is_some_and(|sniffed| sniffed.format != ArchiveFormat::Unknown);
-        if set.is_rar()
-            || sniffed
-                .as_ref()
-                .is_some_and(|sniffed| sniffed.format == ArchiveFormat::Rar)
+        // 是否按 RAR 分卷读取以内容为准：`part1.r删ar除` 之类的伪装名
+        // 无法靠扩展名判断，而普通 part1.jpg/part2.jpg 不能被误当 RAR。
+        if sniffed
+            .as_ref()
+            .is_some_and(|sniffed| sniffed.format == ArchiveFormat::Rar)
         {
             let first_part = crate::rar_backend::first_part(first);
             return Ok(PayloadResolution {
@@ -381,12 +382,25 @@ pub fn verify_archive(
 }
 
 /// 该文件能否快速校验密码；不能时应直接请求用户输入，避免逐个试密造成长时间等待。
+///
+/// ZIP 可快速校验条目密码；7z 仅在头加密时可快速校验（打开头部即可确认）；
+/// 7z 条目加密、RAR 等需要解压条目，不在首层自动试密。
 pub fn supports_quick_password_test(path: &Path) -> bool {
-    let format = probe_archive(path)
+    let Some(format) = probe_archive(path)
         .ok()
         .flatten()
-        .or_else(|| ArchiveFormat::from_extension(path));
-    format.is_some_and(ArchiveFormat::supports_quick_password_test)
+        .or_else(|| ArchiveFormat::from_extension(path))
+    else {
+        return false;
+    };
+    match format {
+        ArchiveFormat::Zip | ArchiveFormat::Zipx => true,
+        ArchiveFormat::SevenZ => matches!(
+            open_archive(path, &OpenOptions::default()),
+            Err(EngineError::PasswordRequired)
+        ),
+        _ => false,
+    }
 }
 
 /// 快速判断密码是否正确；只解最小加密条目，避免整包试跑。

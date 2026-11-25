@@ -2,12 +2,13 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use rarkzip_engine::{
     create_archive, extract_archive, hash_bytes, hash_file_many, open_archive, smart_target,
     test_password, verify_archive, ArchiveFormat, CreateOptions, ExtractMode, ExtractOptions,
-    HashAlgorithm, NoopSink, OpenOptions, PasswordBook, PasswordPrompt, Progress, ProgressSink,
-    RecoveryControl, RecoveryMode, RecoveryOptions, ZipAlgorithm,
+    HashAlgorithm, NoopSink, OpenOptions, PasswordBook, PasswordPrompt, Phase, Progress,
+    ProgressSink, RecoveryControl, RecoveryMode, RecoveryOptions, ZipAlgorithm,
 };
 use tempfile::TempDir;
 
@@ -1278,6 +1279,7 @@ fn encrypted_7z_write_and_read() {
 
     let err = open_archive(&archive, &OpenOptions::default()).unwrap_err();
     assert!(err.is_password_related(), "unexpected error: {err:?}");
+    assert!(rarkzip_engine::supports_quick_password_test(&archive));
     assert!(!test_password(&archive, "wrong").unwrap());
     assert!(test_password(&archive, "seven-secret").unwrap());
     let info = open_archive(
@@ -1465,6 +1467,7 @@ fn parent_password_survives_unencrypted_intermediate_layer() {
 struct PasswordSink {
     password: String,
     requests: AtomicUsize,
+    phases: Mutex<Vec<Phase>>,
 }
 
 impl PasswordSink {
@@ -1472,16 +1475,28 @@ impl PasswordSink {
         Self {
             password: password.to_string(),
             requests: AtomicUsize::new(0),
+            phases: Mutex::new(Vec::new()),
         }
     }
 
     fn requests(&self) -> usize {
         self.requests.load(Ordering::Relaxed)
     }
+
+    fn saw_phase(&self, phase: Phase) -> bool {
+        self.phases
+            .lock()
+            .map(|phases| phases.contains(&phase))
+            .unwrap_or(false)
+    }
 }
 
 impl ProgressSink for PasswordSink {
-    fn update(&self, _progress: &Progress) {}
+    fn update(&self, progress: &Progress) {
+        if let Ok(mut phases) = self.phases.lock() {
+            phases.push(progress.phase);
+        }
+    }
 
     fn request_password(&self, prompt: &PasswordPrompt) -> Option<String> {
         assert!(prompt.attempt >= 1);
@@ -1759,6 +1774,7 @@ fn nested_rar_wrong_parent_password_prompts() {
     .unwrap();
     assert_eq!(result.nested_archives, 1);
     assert_eq!(sink.requests(), 1);
+    assert!(sink.saw_phase(Phase::Nested));
     assert!(out.join("bundle/crypted/.gitignore").exists());
 }
 
@@ -2005,5 +2021,95 @@ fn nested_header_encrypted_rar_uses_password_book() {
     assert_eq!(
         fs::read(out.join("bundle/header/sample.txt")).unwrap(),
         b"header encrypted rar fixture\n"
+    );
+}
+
+#[test]
+fn split_header_encrypted_7z_uses_password_book() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("payload.bin");
+    let content = pseudo_random_bytes(180_000, 0x1357_9BDF);
+    write(&source, &content);
+    let archive = temp.path().join("book.7z");
+    let mut create = options(ArchiveFormat::SevenZ);
+    create.password = Some("book-secret".to_string());
+    create.volume_size = Some(64 * 1024);
+    let outcome =
+        create_archive(std::slice::from_ref(&source), &archive, &create, &NoopSink).unwrap();
+    assert!(outcome.volumes >= 2);
+    assert!(rarkzip_engine::supports_quick_password_test(&outcome.dest));
+
+    let out = temp.path().join("split-book-out");
+    extract_archive(
+        &outcome.dest,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: None,
+            passwords: vec!["wrong-pass".to_string(), "book-secret".to_string()],
+            propagate_motw: false,
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    assert_eq!(fs::read(out.join("payload.bin")).unwrap(), content);
+}
+
+#[test]
+fn masked_rar_parts_open_from_any_volume() {
+    let temp = TempDir::new().unwrap();
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    for index in 1..=4 {
+        let name = format!("set.part{index}.r删ar除");
+        fs::copy(fixture_dir.join(&name), temp.path().join(&name)).unwrap();
+    }
+
+    let part2 = temp.path().join("set.part2.r删ar除");
+    let info = open_archive(&part2, &OpenOptions::default()).unwrap();
+    assert_eq!(info.format, ArchiveFormat::Rar);
+    assert!(info.entries.iter().any(|entry| entry.path == "sample.bin"));
+
+    let out = temp.path().join("masked-rar-out");
+    extract_archive(
+        &part2,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(out.clone()),
+            password: Some("unrar".to_string()),
+            propagate_motw: false,
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap();
+    let content = fs::read(out.join("sample.bin")).unwrap();
+    assert_eq!(content.len(), 30_000);
+    assert_eq!(
+        hash_bytes(HashAlgorithm::Sha256, &content),
+        "c93736df499177b302e8d6135596c8c141b876335f2c6420d5b8f3ac768d8983"
+    );
+}
+
+#[test]
+fn rar_wrong_provided_password_fails_in_extraction() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/crypted.rar");
+    let temp = TempDir::new().unwrap();
+    let error = extract_archive(
+        &fixture,
+        &ExtractOptions {
+            mode: ExtractMode::Custom(temp.path().join("wrong-rar-out")),
+            password: Some("wrong-pass".to_string()),
+            propagate_motw: false,
+            nested_depth: 0,
+            ..Default::default()
+        },
+        &NoopSink,
+    )
+    .unwrap_err();
+    // 首层 RAR 不为了验证密码预先解压整条目录；错误密码由实际解压发现。
+    assert!(
+        matches!(error, rarkzip_engine::EngineError::WrongPassword),
+        "unexpected error: {error:?}"
     );
 }

@@ -330,7 +330,16 @@ pub(crate) fn extract(
             archive = header.skip().map_err(map_unrar)?;
             continue;
         }
-        archive = header.extract_to(to_extended(&target)).map_err(map_unrar)?;
+        archive = header.extract_to(to_extended(&target)).map_err(|error| {
+            let _ = std::fs::remove_file(to_extended(&target));
+            // 带密码解压时，RAR3 之类的错误密码会表现为 CRC/BadData，
+            // 与真正损坏难以区分；交给上层重新请求密码，而不是直接失败。
+            if password.is_some() && matches!(error.code, Code::BadPassword | Code::BadData) {
+                EngineError::WrongPassword
+            } else {
+                map_unrar(error)
+            }
+        })?;
         set_mtime(&target, dos_time_unix(file_time))?;
         if let Some(zone) = motw {
             if let Err(err) = apply_motw(&target, zone) {

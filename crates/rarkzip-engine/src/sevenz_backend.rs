@@ -121,8 +121,27 @@ pub(crate) fn list(path: &Path, password: Option<&str>) -> Result<ArchiveInfo> {
     })
 }
 
+/// 7z 头是否加密。头加密的归档只读头即可快速校验密码，不需要解压条目。
+pub(crate) fn header_encrypted(path: &Path) -> bool {
+    matches!(
+        ArchiveReader::open(to_extended(path), Password::empty()),
+        Err(SevenZError::PasswordRequired
+            | SevenZError::MaybeBadPassword(_)
+            | SevenZError::NextHeaderCrcMismatch)
+    )
+}
+
 pub(crate) fn test_password(path: &Path, password: &str) -> Result<bool> {
     let password_value = Password::from(password);
+    if header_encrypted(path) {
+        return match ArchiveReader::open(to_extended(path), password_value) {
+            Ok(_) => Ok(true),
+            Err(error) => match map_7z(error, true) {
+                EngineError::WrongPassword | EngineError::PasswordRequired => Ok(false),
+                other => Err(other),
+            },
+        };
+    }
     let mut reader = match ArchiveReader::open(to_extended(path), password_value) {
         Ok(reader) => reader,
         Err(error) => {
