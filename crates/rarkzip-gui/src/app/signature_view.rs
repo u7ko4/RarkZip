@@ -18,6 +18,7 @@ use rarkzip_engine::paths::unique_path;
 
 use crate::components::{self, icon, IconName};
 use crate::design;
+use crate::design::WindowCorners as _;
 use crate::i18n::{tr, Language};
 use crate::theme::{self, Palette};
 
@@ -1008,6 +1009,8 @@ impl MainView {
                     .overflow_y_scrollbar()
                     .child(div().px(px(20.0)).pb(px(20.0)).child(body)),
             )
+            // 页面背景贴住窗口下沿，底部两角要自己圆。
+            .round_window_corners(window, cx)
             .into_any_element()
     }
 
@@ -1606,6 +1609,8 @@ impl MainView {
                     .overflow_y_scrollbar()
                     .child(div().px(px(20.0)).pb(px(20.0)).child(body)),
             )
+            // 页面背景贴住窗口下沿，底部两角要自己圆。
+            .round_window_corners(window, cx)
             .into_any_element()
     }
 
