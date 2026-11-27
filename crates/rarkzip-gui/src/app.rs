@@ -1897,7 +1897,7 @@ impl MainView {
             }),
             ..Default::default()
         };
-        match cx.open_window(options, |window, cx| {
+        match gpui_kit::open_window(options, cx, |window, cx| {
             cx.new(|cx| MainView::new(window, cx, None, None, None))
         }) {
             Ok(_) => {}
@@ -1938,13 +1938,13 @@ impl MainView {
             } else {
                 WindowDecorations::Server
             }),
-            window_min_size: Some(size(px(620.0), px(460.0))),
+            window_min_size: Some(design::outer_size(620.0, 460.0, client_decorations)),
             ..Default::default()
         };
-        match cx.open_window(options, move |window, cx| {
+        match gpui_kit::open_window(options, cx, move |window, cx| {
             cx.new(|cx| MainView::new_feature(window, cx, feature, sources.clone(), output.clone()))
         }) {
-            Ok(handle) => {
+            Ok((handle, _view)) => {
                 // 独立窗口是模态工作流的入口，聚焦到新窗口。
                 let _ = handle.update(cx, |_, window, _| window.activate_window());
             }

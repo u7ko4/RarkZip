@@ -1192,9 +1192,26 @@ pub trait WindowCorners: Sized {
     fn round_window_bottom(self, window: &Window, cx: &App) -> Self;
 }
 
+/// 窗口内容区（边框以内）应使用的圆角。
+///
+/// `window_corner_radii` 返回的是外框半径；`window_border` 在内容外侧还画了
+/// 1px 边框，内容背景如果照搬外框半径，两层抗锯齿曲线会错开 1px，在深色
+/// 主题下尤其容易出现白色毛边。这里统一减掉边框宽度，让内容圆角嵌在边框
+/// 内侧，边缘更干净。
+pub fn window_content_corner_radii(window: &Window, cx: &App) -> Corners<Pixels> {
+    let radii = gpui_kit::component::window_corner_radii(window, cx);
+    let inset = |radius: Pixels| px((f32::from(radius) - 1.0).max(0.0));
+    Corners {
+        top_left: inset(radii.top_left),
+        top_right: inset(radii.top_right),
+        bottom_left: inset(radii.bottom_left),
+        bottom_right: inset(radii.bottom_right),
+    }
+}
+
 impl<T: Styled> WindowCorners for T {
     fn round_window_corners(self, window: &Window, cx: &App) -> Self {
-        let radii = gpui_kit::component::window_corner_radii(window, cx);
+        let radii = window_content_corner_radii(window, cx);
         self.rounded_tl(radii.top_left)
             .rounded_tr(radii.top_right)
             .rounded_bl(radii.bottom_left)
@@ -1202,12 +1219,12 @@ impl<T: Styled> WindowCorners for T {
     }
 
     fn round_window_top(self, window: &Window, cx: &App) -> Self {
-        let radii = gpui_kit::component::window_corner_radii(window, cx);
+        let radii = window_content_corner_radii(window, cx);
         self.rounded_tl(radii.top_left).rounded_tr(radii.top_right)
     }
 
     fn round_window_bottom(self, window: &Window, cx: &App) -> Self {
-        let radii = gpui_kit::component::window_corner_radii(window, cx);
+        let radii = window_content_corner_radii(window, cx);
         self.rounded_bl(radii.bottom_left)
             .rounded_br(radii.bottom_right)
     }

@@ -1302,7 +1302,8 @@ impl QuickView {
                     .on_double_click(|_, window, _| window.zoom_window());
                 drag_area
             })
-            .child(
+            .child({
+                let close_radius = crate::design::window_content_corner_radii(window, cx).top_right;
                 div()
                     .flex()
                     .items_center()
@@ -1313,6 +1314,7 @@ impl QuickView {
                         WindowControlArea::Min,
                         false,
                         crate::theme::TITLEBAR_HEIGHT,
+                        px(0.0),
                     ))
                     .child(self.window_control(
                         "quick-max",
@@ -1320,6 +1322,7 @@ impl QuickView {
                         WindowControlArea::Max,
                         false,
                         crate::theme::TITLEBAR_HEIGHT,
+                        px(0.0),
                     ))
                     .child(self.window_control(
                         "quick-close",
@@ -1327,8 +1330,9 @@ impl QuickView {
                         WindowControlArea::Close,
                         true,
                         crate::theme::TITLEBAR_HEIGHT,
-                    )),
-            )
+                        close_radius,
+                    ))
+            })
             // 标题栏贴着上沿，顶部两角要自己圆。
             .round_window_top(window, cx)
             .into_any_element()
@@ -1356,6 +1360,7 @@ impl QuickView {
         area: WindowControlArea,
         danger: bool,
         size: f32,
+        corner_radius: Pixels,
     ) -> AnyElement {
         let palette = self.palette;
         let control = div()
@@ -1365,6 +1370,7 @@ impl QuickView {
             .flex()
             .items_center()
             .justify_center()
+            .rounded_tr(corner_radius)
             .cursor_pointer()
             .text_color(palette.text)
             .when(danger, |this| {

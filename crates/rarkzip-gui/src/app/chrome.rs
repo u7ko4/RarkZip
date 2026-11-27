@@ -186,6 +186,7 @@ impl MainView {
             } else {
                 IconName::Square
             };
+            let close_radius = design::window_content_corner_radii(window, cx).top_right;
             Some(
                 div()
                     .flex()
@@ -197,6 +198,7 @@ impl MainView {
                         WindowControlArea::Min,
                         false,
                         toolbar_height,
+                        px(0.0),
                     ))
                     .child(self.window_control(
                         "win-max",
@@ -204,6 +206,7 @@ impl MainView {
                         WindowControlArea::Max,
                         false,
                         toolbar_height,
+                        px(0.0),
                     ))
                     .child(self.window_control(
                         "win-close",
@@ -211,6 +214,7 @@ impl MainView {
                         WindowControlArea::Close,
                         true,
                         toolbar_height,
+                        close_radius,
                     ))
                     .into_any_element(),
             )
@@ -278,6 +282,7 @@ impl MainView {
         area: WindowControlArea,
         danger: bool,
         size: f32,
+        corner_radius: Pixels,
     ) -> AnyElement {
         let palette = self.palette;
         let control = div()
@@ -287,6 +292,7 @@ impl MainView {
             .flex()
             .items_center()
             .justify_center()
+            .rounded_tr(corner_radius)
             .cursor_pointer()
             .text_color(palette.text)
             .when(danger, |this| {
@@ -360,7 +366,8 @@ impl MainView {
                     .on_double_click(|_, window, _| window.zoom_window());
                 drag_area
             })
-            .child(
+            .child({
+                let close_radius = design::window_content_corner_radii(window, cx).top_right;
                 div()
                     .flex()
                     .items_center()
@@ -371,6 +378,7 @@ impl MainView {
                         WindowControlArea::Min,
                         false,
                         crate::theme::TITLEBAR_HEIGHT,
+                        px(0.0),
                     ))
                     .child(self.window_control(
                         "feature-win-max",
@@ -378,6 +386,7 @@ impl MainView {
                         WindowControlArea::Max,
                         false,
                         crate::theme::TITLEBAR_HEIGHT,
+                        px(0.0),
                     ))
                     .child(self.window_control(
                         "feature-win-close",
@@ -385,8 +394,9 @@ impl MainView {
                         WindowControlArea::Close,
                         true,
                         crate::theme::TITLEBAR_HEIGHT,
-                    )),
-            )
+                        close_radius,
+                    ))
+            })
             // 独立窗口的标题栏贴着上沿，顶部两角要自己圆。
             .round_window_top(window, cx)
             .into_any_element()
