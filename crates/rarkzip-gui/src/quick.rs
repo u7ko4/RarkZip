@@ -3,17 +3,18 @@
 //! 流程与设计稿第 6 页一致：选择解压路径 →（加密时）输入密码 →
 //! （同名文件时）冲突确认 → 进度 → 完成。压缩任务直接显示进度。
 
-use crate::design::WindowCorners as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::design::WindowCorners as _;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::Icon;
 use gpui_kit::component::InteractiveElementExt;
+use gpui_kit::component::{Disableable, Icon};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -21,10 +22,11 @@ use gpui_kit::*;
 use rarkzip_engine::{
     create_archive, extract_archive, format_size, open_archive, ArchiveFormat, Codepage,
     CreateOptions, EngineError, ExtractMode, ExtractOptions, OpenOptions, PasswordBook,
-    ProgressSink, Settings, ZipAlgorithm,
+    PasswordPrompt, Phase, ProgressSink, Settings, ZipAlgorithm,
 };
 
 use crate::components::*;
+use crate::i18n::{tr, tr_fmt, Language};
 use crate::theme::{self, Palette, Skin, ThemeMode};
 
 /// 资源管理器右键菜单的直接解压方式。
@@ -124,6 +126,10 @@ struct SmartConflictInfo {
 #[derive(Debug)]
 enum QuickEvent {
     NeedPassword,
+    PasswordPrompt {
+        prompt: PasswordPrompt,
+        responder: Sender<Option<String>>,
+    },
     Prepared {
         total_entries: usize,
         conflicts: usize,
@@ -139,6 +145,9 @@ enum QuickEvent {
     },
     Progress {
         percent: f32,
+        phase: Phase,
+        done: u64,
+        total: u64,
         current: String,
     },
     Extracted {
@@ -157,6 +166,32 @@ enum QuickEvent {
 struct QuickControl {
     cancelled: AtomicBool,
     paused: AtomicBool,
+}
+
+/// 右键快速任务的诊断日志。进度长时间不动时，日志能看出卡在哪个阶段/文件。
+fn quick_task_log(line: &str) {
+    let directory = rarkzip_engine::settings::data_dir();
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let path = directory.join("quick-task.log");
+    if std::fs::metadata(&path)
+        .map(|meta| meta.len() > 4 * 1024 * 1024)
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            file,
+            "[{}] {line}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
+    }
 }
 
 struct QuickSink {
@@ -186,8 +221,19 @@ impl ProgressSink for QuickSink {
         let mut last = self.last_percent.lock().unwrap();
         if (percent - *last).abs() >= 0.5 || percent >= 100.0 {
             *last = percent;
+            quick_task_log(&format!(
+                "progress {} {:.1}% {}/{} {}",
+                progress.phase.label(),
+                percent,
+                progress.done,
+                progress.total,
+                progress.current
+            ));
             let _ = self.sender.send(QuickEvent::Progress {
                 percent,
+                phase: progress.phase,
+                done: progress.done,
+                total: progress.total,
                 current: progress.current.clone(),
             });
         }
@@ -196,10 +242,40 @@ impl ProgressSink for QuickSink {
     fn is_cancelled(&self) -> bool {
         self.control.cancelled.load(Ordering::Relaxed)
     }
+
+    /// 嵌套层密码错误或首层需要密码时，阻塞工作线程等待窗口输入。
+    fn request_password(&self, prompt: &PasswordPrompt) -> Option<String> {
+        if self.control.cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        let (responder, receiver) = unbounded();
+        if self
+            .sender
+            .send(QuickEvent::PasswordPrompt {
+                prompt: prompt.clone(),
+                responder,
+            })
+            .is_err()
+        {
+            return None;
+        }
+        loop {
+            match receiver.recv_timeout(Duration::from_millis(120)) {
+                Ok(value) => return value,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if self.control.cancelled.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return None,
+            }
+        }
+    }
 }
 
 pub struct QuickView {
     focus_handle: FocusHandle,
+    language: Language,
     palette: Palette,
     settings: Settings,
     action: QuickAction,
@@ -215,6 +291,12 @@ pub struct QuickView {
     remember: bool,
     password_error: Option<String>,
     password_attempted: bool,
+    /// 当前窗口创建时加载的密码本，用于密码弹窗中的快速选择。
+    password_book: PasswordBook,
+    password_picker_open: bool,
+    password_reveal: bool,
+    /// 引擎阻塞等待中的密码请求；提交后通过它唤醒工作线程。
+    pending_password_prompt: Option<(Sender<Option<String>>, PasswordPrompt)>,
     conflict: Option<ConflictInfo>,
     conflict_choice: ConflictChoice,
     smart_dest: Option<PathBuf>,
@@ -226,6 +308,11 @@ pub struct QuickView {
     prepared_selected: Option<Vec<usize>>,
     total_entries: usize,
     percent: f32,
+    phase: Option<Phase>,
+    done_bytes: u64,
+    total_bytes: u64,
+    speed_bps: f64,
+    last_progress: Option<(Instant, u64)>,
     current: String,
     paused: bool,
     result_text: Option<String>,
@@ -244,7 +331,30 @@ pub struct QuickView {
 }
 
 impl QuickView {
+    fn localized(&self, text: &'static str) -> &'static str {
+        tr(self.language, text)
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>, action: QuickAction) -> Self {
+        Self::build(window, cx, action, PasswordBook::load_default())
+    }
+
+    #[cfg(test)]
+    fn new_with_book(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: QuickAction,
+        password_book: PasswordBook,
+    ) -> Self {
+        Self::build(window, cx, action, password_book)
+    }
+
+    fn build(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: QuickAction,
+        password_book: PasswordBook,
+    ) -> Self {
         let settings = Settings::load();
         let theme_mode = ThemeMode::from_setting(&settings.view.theme);
         let skin = Skin::from_setting(&settings.view.theme_skin);
@@ -252,6 +362,7 @@ impl QuickView {
         theme::set_ui_font_size(settings.view.font_size);
         theme::apply(cx, dark, skin);
         let palette = Palette::for_skin(dark, skin);
+        let language = Language::from_setting(&settings.general.language);
         let custom_titlebar = settings.view.use_custom_titlebar;
 
         let remembered_dir = settings.ui.last_extract_dir.trim().to_string();
@@ -280,7 +391,7 @@ impl QuickView {
         let password_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .placeholder("输入密码")
+                .placeholder(tr(language, "输入密码"))
         });
         let (sender, receiver) = unbounded();
         let step = match action {
@@ -297,6 +408,7 @@ impl QuickView {
         let mut view = Self {
             focus_handle: cx.focus_handle(),
             palette,
+            language,
             settings,
             action,
             step,
@@ -310,6 +422,10 @@ impl QuickView {
             remember: false,
             password_error: None,
             password_attempted: false,
+            password_book,
+            password_picker_open: false,
+            password_reveal: true,
+            pending_password_prompt: None,
             conflict: None,
             conflict_choice: ConflictChoice::Overwrite,
             smart_dest: None,
@@ -321,6 +437,11 @@ impl QuickView {
             prepared_selected: None,
             total_entries: 0,
             percent: 0.0,
+            phase: None,
+            done_bytes: 0,
+            total_bytes: 0,
+            speed_bps: 0.0,
+            last_progress: None,
             current: String::new(),
             paused: false,
             result_text: None,
@@ -350,6 +471,7 @@ impl QuickView {
         window.on_window_should_close(&*cx, move |window, cx| {
             let _ = weak.update(cx, |view, _| {
                 view.control.cancelled.store(true, Ordering::Relaxed);
+                view.cancel_pending_prompt();
                 view.persist_window_size(window);
             });
             true
@@ -371,7 +493,21 @@ impl QuickView {
                 .await;
             let alive = weak
                 .update(cx, |view, cx| {
-                    view.drain_events(cx);
+                    let mut changed = view.drain_events(cx);
+                    // 单条大文件解压时后端可能很久不回报百分比；让“已用”
+                    // 计时器独立走动，避免窗口看起来完全卡死。
+                    if view.running {
+                        if let Some(started) = view.started {
+                            let secs = started.elapsed().as_secs();
+                            if secs != view.elapsed_secs {
+                                view.elapsed_secs = secs;
+                                changed = true;
+                            }
+                        }
+                    }
+                    if changed {
+                        cx.notify();
+                    }
                     true
                 })
                 .unwrap_or(false);
@@ -382,25 +518,45 @@ impl QuickView {
         .detach();
     }
 
-    fn drain_events(&mut self, cx: &mut Context<Self>) {
+    fn drain_events(&mut self, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
         while let Ok(event) = self.receiver.try_recv() {
             self.handle_event(event, cx);
             changed = true;
         }
-        if changed {
-            cx.notify();
-        }
+        changed
     }
 
     fn handle_event(&mut self, event: QuickEvent, cx: &mut Context<Self>) {
         match event {
             QuickEvent::NeedPassword => {
+                quick_task_log("need-password");
                 self.running = false;
                 self.step = Step::Password;
+                self.password_picker_open = false;
+                self.password_reveal = true;
                 self.password_error = self
                     .password_attempted
-                    .then(|| "密码错误，请重试。".to_string());
+                    .then(|| self.localized("密码错误，请重试。").to_string());
+                self.resize_for_step(cx);
+            }
+            QuickEvent::PasswordPrompt { prompt, responder } => {
+                // 工作线程已在等待回复：此时不能重启解压，提交后直接把
+                // 密码送回引擎，让嵌套/首层流程原地继续。
+                quick_task_log(&format!(
+                    "password-prompt nested={} attempt={} archive={}",
+                    prompt.nested,
+                    prompt.attempt,
+                    prompt.archive.display()
+                ));
+                self.running = false;
+                self.password_attempted = prompt.attempt > 1;
+                self.password_error =
+                    (prompt.attempt > 1).then(|| self.localized("密码错误，请重试。").to_string());
+                self.password_picker_open = false;
+                self.password_reveal = true;
+                self.pending_password_prompt = Some((responder, prompt));
+                self.step = Step::Password;
                 self.resize_for_step(cx);
             }
             QuickEvent::Prepared {
@@ -434,6 +590,7 @@ impl QuickView {
                 if password.is_some() {
                     self.password = password;
                 }
+                self.total_entries = all_indices.len();
                 self.smart_dest = Some(dest.clone());
                 self.active_dest = Some(dest);
                 self.smart_conflicts = conflicts;
@@ -449,14 +606,44 @@ impl QuickView {
                     self.resize_for_step(cx);
                 }
             }
-            QuickEvent::Progress { percent, current } => {
+            QuickEvent::Progress {
+                percent,
+                phase,
+                done,
+                total,
+                current,
+            } => {
+                let now = Instant::now();
+                if let Some((last_time, last_done)) = self.last_progress {
+                    let seconds = now.duration_since(last_time).as_secs_f64();
+                    if done < last_done || total != self.total_bytes {
+                        // 进入下一个嵌套包时后端百分比/字节数会从头开始。
+                        self.speed_bps = 0.0;
+                    } else if seconds >= 0.2 && done > last_done {
+                        let instant = (done - last_done) as f64 / seconds;
+                        self.speed_bps = if self.speed_bps > 0.0 {
+                            self.speed_bps * 0.7 + instant * 0.3
+                        } else {
+                            instant
+                        };
+                    }
+                }
+                self.last_progress = Some((now, done));
                 self.percent = percent;
+                self.phase = Some(phase);
+                self.done_bytes = done;
+                self.total_bytes = total;
                 self.elapsed_secs = self.started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 if !current.is_empty() {
                     self.current = current;
                 }
             }
             QuickEvent::Extracted { dest, files, bytes } => {
+                quick_task_log(&format!(
+                    "done files={files} bytes={bytes} dest={}",
+                    dest.display()
+                ));
+                self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Done;
                 self.percent = 100.0;
@@ -464,10 +651,10 @@ impl QuickView {
                 // 相对路径的 Here 模式会得到 "."，补全为真实目录；
                 // 同时去掉引擎内部使用的 \\?\ 长路径前缀，便于阅读。
                 let dest = plain_path(std::fs::canonicalize(&dest).unwrap_or(dest));
-                self.result_text = Some(format!(
-                    "已解压 {files} 个文件 · {} → {}",
-                    format_size(bytes),
-                    dest.display()
+                self.result_text = Some(tr_fmt(
+                    self.language,
+                    "已解压 {} 个文件 · {} → {}",
+                    &[&files, &format_size(bytes), &dest.display()],
                 ));
                 if self.open_after {
                     let _ = open::that(&dest);
@@ -487,7 +674,7 @@ impl QuickView {
                 self.percent = 100.0;
                 self.elapsed_secs = self.started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 let dest = std::fs::canonicalize(&dest).unwrap_or(dest);
-                self.result_text = Some(format!("压缩完成：{}", dest.display()));
+                self.result_text = Some(tr_fmt(self.language, "压缩完成：{}", &[&dest.display()]));
                 self.active_dest = Some(dest.clone());
                 self.result_open = dest.parent().map(Path::to_path_buf);
                 self.resize_for_step(cx);
@@ -498,15 +685,19 @@ impl QuickView {
                 return;
             }
             QuickEvent::Failed(error) => {
+                quick_task_log(&format!("failed {error}"));
+                self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Failed;
                 self.error = Some(error);
                 self.resize_for_step(cx);
             }
             QuickEvent::Cancelled => {
+                quick_task_log("cancelled");
+                self.cancel_pending_prompt();
                 self.running = false;
                 self.step = Step::Failed;
-                self.error = Some("任务已取消。".to_string());
+                self.error = Some(self.localized("任务已取消。").to_string());
                 self.resize_for_step(cx);
             }
         }
@@ -538,7 +729,7 @@ impl QuickView {
         }
         let dest = self.target_dir(cx);
         if dest.as_os_str().is_empty() {
-            self.error = Some("请选择解压目标路径。".to_string());
+            self.error = Some(self.localized("请选择解压目标路径。").to_string());
             cx.notify();
             return;
         }
@@ -556,7 +747,20 @@ impl QuickView {
     fn submit_password(&mut self, cx: &mut Context<Self>) {
         let value = self.password_input.read(cx).unmask_value().to_string();
         if value.is_empty() {
-            self.password_error = Some("请输入密码。".to_string());
+            self.password_error = Some(self.localized("请输入密码。").to_string());
+            cx.notify();
+            return;
+        }
+        self.password_picker_open = false;
+        // 嵌套层/首层的密码请求：工作线程正阻塞等待，直接回复它。
+        if let Some((responder, _)) = self.pending_password_prompt.take() {
+            self.password = Some(value.clone());
+            self.password_error = None;
+            self.password_attempted = true;
+            let _ = responder.send(Some(value));
+            self.running = true;
+            self.step = Step::Progress;
+            self.resize_for_step(cx);
             cx.notify();
             return;
         }
@@ -570,6 +774,26 @@ impl QuickView {
             }
             QuickAction::ExtractPreset { .. } => self.start_preset_extract(cx),
             QuickAction::Compress { .. } => {}
+        }
+    }
+
+    /// 密码弹窗：选择密码本条目后填入并立即尝试。
+    fn select_book_password(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.password_book.entries().get(index).cloned() else {
+            return;
+        };
+        self.password_input.update(cx, |state, cx| {
+            state.set_value(entry.password.clone(), window, cx);
+        });
+        self.password = Some(entry.password);
+        self.password_picker_open = false;
+        self.submit_password(cx);
+    }
+
+    /// 取消仍阻塞在密码请求上的工作线程。
+    fn cancel_pending_prompt(&mut self) {
+        if let Some((responder, _)) = self.pending_password_prompt.take() {
+            let _ = responder.send(None);
         }
     }
 
@@ -787,7 +1011,14 @@ impl QuickView {
         // 内容区随界面字号缩放；去掉“内容/最近处理”后，进度与结果页按实际内容收紧高度。
         let font_delta = (crate::theme::ui_font_size() - 13.0) * 18.0;
         let (width, height) = match self.step {
-            Step::Password => (self.base_size.0.clamp(500.0, 640.0), 440.0),
+            Step::Password => (
+                self.base_size.0.clamp(500.0, 640.0),
+                if self.password_picker_open {
+                    660.0
+                } else {
+                    440.0
+                },
+            ),
             Step::Conflict => (self.base_size.0.max(600.0), 480.0),
             Step::Progress => (self.base_size.0, (405.0 + font_delta).clamp(390.0, 510.0)),
             Step::Done | Step::Failed => {
@@ -857,6 +1088,7 @@ impl QuickView {
         let control = self.control.clone();
         let sender = self.sender.clone();
         let sink = QuickSink::new(sender.clone(), control.clone());
+        let language = self.language;
         std::thread::spawn(move || {
             let mut renamed_files = 0usize;
             let mut renamed_bytes = 0u64;
@@ -868,7 +1100,11 @@ impl QuickView {
                 ));
                 let _ = std::fs::remove_dir_all(&temp);
                 if let Err(error) = std::fs::create_dir_all(&temp) {
-                    let _ = sender.send(QuickEvent::Failed(format!("创建临时目录失败：{error}")));
+                    let _ = sender.send(QuickEvent::Failed(tr_fmt(
+                        language,
+                        "创建临时目录失败：{}",
+                        &[&error],
+                    )));
                     return;
                 }
                 let mut options = rename_options.clone();
@@ -883,8 +1119,11 @@ impl QuickView {
                         if let Some(parent) = conflict.rename_path.parent() {
                             if let Err(error) = std::fs::create_dir_all(parent) {
                                 let _ = std::fs::remove_dir_all(&temp);
-                                let _ = sender
-                                    .send(QuickEvent::Failed(format!("创建目标目录失败：{error}")));
+                                let _ = sender.send(QuickEvent::Failed(tr_fmt(
+                                    language,
+                                    "创建目标目录失败：{}",
+                                    &[&error],
+                                )));
                                 return;
                             }
                         }
@@ -895,8 +1134,11 @@ impl QuickView {
                         });
                         if let Err(error) = moved {
                             let _ = std::fs::remove_dir_all(&temp);
-                            let _ = sender
-                                .send(QuickEvent::Failed(format!("重命名解压文件失败：{error}")));
+                            let _ = sender.send(QuickEvent::Failed(tr_fmt(
+                                language,
+                                "重命名解压文件失败：{}",
+                                &[&error],
+                            )));
                             return;
                         }
                         renamed_files += 1;
@@ -933,11 +1175,17 @@ impl QuickView {
         self.running = true;
         self.step = Step::Progress;
         self.percent = 0.0;
-        self.current = current;
+        self.phase = None;
+        self.done_bytes = 0;
+        self.total_bytes = 0;
+        self.speed_bps = 0.0;
+        self.last_progress = None;
+        self.current = current.clone();
         self.started = Some(Instant::now());
         self.elapsed_secs = 0;
         self.error = None;
         self.control = Arc::new(QuickControl::default());
+        quick_task_log(&format!("start {:?} ({current})", self.action));
         self.resize_for_step(cx);
     }
 
@@ -1128,12 +1376,17 @@ impl QuickView {
             test_after: self.settings.compression.test_after,
             delete_sources,
             sfx: false,
+            volume_size: None,
         };
         self.active_dest = Some(dest.clone());
         let current = if sources.len() == 1 {
             format!("{} → {}", first.display(), dest.display())
         } else {
-            format!("{} 个项目 → {}", sources.len(), dest.display())
+            tr_fmt(
+                self.language,
+                "{} 个项目 → {}",
+                &[&sources.len(), &dest.display()],
+            )
         };
         self.begin_progress(current, cx);
         let control = self.control.clone();
@@ -1179,6 +1432,8 @@ impl QuickView {
 
     /// 应用内关闭按钮不会触发 on_window_should_close，关闭前显式保存尺寸。
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.control.cancelled.store(true, Ordering::Relaxed);
+        self.cancel_pending_prompt();
         self.persist_window_size(window);
         window.remove_window();
         cx.notify();
@@ -1193,6 +1448,7 @@ impl QuickView {
 
     fn stop(&mut self, cx: &mut Context<Self>) {
         self.control.cancelled.store(true, Ordering::Relaxed);
+        self.cancel_pending_prompt();
         cx.notify();
     }
 
@@ -1215,24 +1471,30 @@ impl QuickView {
 
     fn title(&self) -> String {
         match self.step {
-            Step::Folder => "选择解压路径".to_string(),
-            Step::Password => "输入密码".to_string(),
-            Step::Conflict => "重复的文件".to_string(),
+            Step::Folder => self.localized("选择解压路径").to_string(),
+            Step::Password => self.localized("输入密码").to_string(),
+            Step::Conflict => self.localized("重复的文件").to_string(),
             Step::Progress => match self.action {
-                QuickAction::ExtractTo { .. } | QuickAction::ExtractPreset { .. } => {
-                    format!("{:.0}% 正在解压 {}", self.percent, self.subtitle())
-                }
-                QuickAction::Compress { .. } => {
-                    format!("{:.0}% 正在压缩 {}", self.percent, self.subtitle())
-                }
+                QuickAction::ExtractTo { .. } | QuickAction::ExtractPreset { .. } => tr_fmt(
+                    self.language,
+                    "{}% 正在解压 {}",
+                    &[&format!("{:.0}", self.percent), &self.subtitle()],
+                ),
+                QuickAction::Compress { .. } => tr_fmt(
+                    self.language,
+                    "{}% 正在压缩 {}",
+                    &[&format!("{:.0}", self.percent), &self.subtitle()],
+                ),
             },
             Step::Done => match self.action {
                 QuickAction::ExtractTo { .. } | QuickAction::ExtractPreset { .. } => {
-                    format!("已解压 · {}", self.subtitle())
+                    tr_fmt(self.language, "已解压 · {}", &[&self.subtitle()])
                 }
-                QuickAction::Compress { .. } => format!("压缩完成 · {}", self.subtitle()),
+                QuickAction::Compress { .. } => {
+                    tr_fmt(self.language, "压缩完成 · {}", &[&self.subtitle()])
+                }
             },
-            Step::Failed => "操作未完成".to_string(),
+            Step::Failed => self.localized("操作未完成").to_string(),
         }
     }
 
@@ -1249,7 +1511,7 @@ impl QuickView {
                     .file_name()
                     .map(|name| name.to_string_lossy().to_string())
                     .unwrap_or_default(),
-                _ => format!("{} 个项目", sources.len()),
+                _ => tr_fmt(self.language, "{} 个项目", &[&sources.len()]),
             },
         }
     }
@@ -1423,9 +1685,9 @@ impl QuickView {
             .map(PathBuf::from);
         if let Some(profile) = profile.as_ref() {
             for (label, folder) in [
-                ("桌面", "Desktop"),
-                ("下载", "Downloads"),
-                ("文档", "Documents"),
+                (self.localized("桌面"), "Desktop"),
+                (self.localized("下载"), "Downloads"),
+                (self.localized("文档"), "Documents"),
             ] {
                 push(label.to_string(), profile.join(folder));
             }
@@ -1462,13 +1724,19 @@ impl QuickView {
             push("根目录".to_string(), PathBuf::from("/"));
         }
         if let Some(parent) = self.archive_path().and_then(Path::parent) {
-            push("压缩包所在位置".to_string(), parent.to_path_buf());
+            push(
+                self.localized("压缩包所在位置").to_string(),
+                parent.to_path_buf(),
+            );
         }
         #[cfg(windows)]
         for letter in b'A'..=b'Z' {
             let root = PathBuf::from(format!("{}:\\", letter as char));
             if root.is_dir() {
-                push(format!("驱动器 {}:", letter as char), root);
+                push(
+                    tr_fmt(self.language, "驱动器 {}:", &[&(letter as char)]),
+                    root,
+                );
             }
         }
         entries
@@ -1477,7 +1745,7 @@ impl QuickView {
     fn render_folder_step(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
         let browse = Button::new("quick-browse")
-            .label("浏览…")
+            .label(self.localized("浏览…"))
             .outline()
             .h(px(CONTROL_HEIGHT))
             .px(px(14.0))
@@ -1562,7 +1830,7 @@ impl QuickView {
                 div()
                     .text_size(crate::theme::caption())
                     .text_color(palette.sub)
-                    .child("选择解压目标位置。默认解压到与压缩包同名的文件夹。"),
+                    .child(self.localized("选择解压目标位置。默认解压到与压缩包同名的文件夹。")),
             )
             .child(
                 div()
@@ -1573,7 +1841,7 @@ impl QuickView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.sub)
-                            .child("目标路径"),
+                            .child(self.localized("目标路径")),
                     )
                     .child(
                         div()
@@ -1603,13 +1871,13 @@ impl QuickView {
                                 div()
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.sub)
-                                    .child("常用位置"),
+                                    .child(self.localized("常用位置")),
                             )
                             .child(
                                 div()
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.muted)
-                                    .child("点击快速定位"),
+                                    .child(self.localized("点击快速定位")),
                             ),
                     )
                     .child(locations),
@@ -1621,30 +1889,37 @@ impl QuickView {
                     .gap(px(8.0))
                     .child(self.check_row(
                         "quick-same-folder",
-                        "解压到与压缩包同名的文件夹",
+                        self.localized("解压到与压缩包同名的文件夹"),
                         self.same_name_folder,
                         cx,
                     ))
                     .child(self.check_row(
                         "quick-delete-archive",
-                        "解压后删除压缩文件",
+                        self.localized("解压后删除压缩文件"),
                         self.delete_archive,
                         cx,
                     ))
                     .child(self.check_row(
                         "quick-open-after",
-                        "解压后打开目标文件夹",
+                        self.localized("解压后打开目标文件夹"),
                         self.open_after,
                         cx,
                     ))
-                    .child(self.check_row("quick-remember", "记住设置", self.remember, cx)),
+                    .child(self.check_row(
+                        "quick-remember",
+                        self.localized("记住设置"),
+                        self.remember,
+                        cx,
+                    )),
             )
             .child(
                 div()
                     .text_size(crate::theme::caption())
                     .line_height(relative(1.5))
                     .text_color(palette.muted)
-                    .child("勾选「记住设置」后，下次「解压到其他文件夹…」将直接沿用并跳过本窗口。"),
+                    .child(self.localized(
+                        "勾选「记住设置」后，下次「解压到其他文件夹…」将直接沿用并跳过本窗口。",
+                    )),
             )
             .when_some(self.error.clone(), |this, error| {
                 this.child(
@@ -1663,7 +1938,7 @@ impl QuickView {
                     .gap(px(10.0))
                     .child(
                         Button::new("quick-cancel")
-                            .label("取消")
+                            .label(self.localized("取消"))
                             .outline()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(16.0))
@@ -1673,7 +1948,7 @@ impl QuickView {
                     )
                     .child(
                         Button::new("quick-ok")
-                            .label("确定")
+                            .label(self.localized("确定"))
                             .primary()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(18.0))
@@ -1688,6 +1963,150 @@ impl QuickView {
     fn render_password_step(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = self.palette;
         let error = self.password_error.clone();
+        let prompt = self
+            .pending_password_prompt
+            .as_ref()
+            .map(|(_, prompt)| prompt.clone());
+        let description = prompt
+            .as_ref()
+            .filter(|prompt| prompt.attempt <= 1)
+            .map(|prompt| prompt.message.clone())
+            .unwrap_or_else(|| self.localized("输入加密文件的密码。").to_string());
+        let archive_name = prompt
+            .as_ref()
+            .and_then(|prompt| prompt.archive.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.subtitle());
+
+        let book: Vec<(String, String)> = self
+            .password_book
+            .entries()
+            .iter()
+            .map(|entry| (entry.note.clone(), entry.password.clone()))
+            .collect();
+        let book_count = book.len();
+        let reveal = self.password_reveal;
+        let picker_open = self.password_picker_open;
+        let mut picker = div().flex().flex_col().gap(px(7.0)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .debug_selector(|| "quick-pwd-book-toggle".to_string())
+                        .child(
+                            Button::new("quick-pwd-book")
+                                .label(tr_fmt(self.language, "从密码本选择（{}）", &[&book_count]))
+                                .icon(icon(IconName::BookOpen, palette.accent, 15.0))
+                                .outline()
+                                .h(px(30.0))
+                                .px(px(12.0))
+                                .text_size(crate::theme::caption())
+                                .disabled(book_count == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.password_picker_open = !this.password_picker_open;
+                                    this.resize_for_step(cx);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(crate::design::icon_action(
+                    &palette,
+                    "quick-pwd-reveal",
+                    if reveal {
+                        IconName::EyeOff
+                    } else {
+                        IconName::Eye
+                    },
+                    palette.sub,
+                    book_count == 0,
+                    if reveal {
+                        self.localized("隐藏密码")
+                    } else {
+                        self.localized("显示密码")
+                    },
+                    cx.listener(|this, _, _, cx| {
+                        this.password_reveal = !this.password_reveal;
+                        cx.notify();
+                    }),
+                )),
+        );
+        if book_count == 0 {
+            picker = picker.child(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child(self.localized("密码本为空，可先在主窗口的密码本页面添加常用密码。")),
+            );
+        } else if picker_open {
+            let mut list = div()
+                .id("quick-password-book-list")
+                .flex()
+                .flex_col()
+                .max_h(px(150.0))
+                .overflow_y_scroll()
+                .rounded(px(crate::theme::RADIUS_CONTROL))
+                .border_1()
+                .border_color(palette.line)
+                .bg(palette.panel);
+            for (index, (note, password)) in book.iter().enumerate() {
+                let label = if note.is_empty() {
+                    tr_fmt(self.language, "密码 {}", &[&(index + 1)])
+                } else {
+                    note.clone()
+                };
+                let shown = if reveal {
+                    password.clone()
+                } else {
+                    "••••••••".to_string()
+                };
+                list = list.child(
+                    div()
+                        .id(format!("quick-password-book-{index}"))
+                        .debug_selector(|| format!("quick-password-book-{index}"))
+                        .role(Role::Button)
+                        .aria_label(label.clone())
+                        .cursor_pointer()
+                        .h(px(32.0))
+                        .px(px(10.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .when(index + 1 < book_count, |this| {
+                            this.border_b_1().border_color(palette.line)
+                        })
+                        .hover(|style| style.bg(palette.hover))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_book_password(index, window, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.text)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .font_family("Cascadia Mono")
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.muted)
+                                .child(shown),
+                        ),
+                );
+            }
+            picker = picker.child(list).child(
+                div()
+                    .text_size(crate::theme::caption())
+                    .text_color(palette.muted)
+                    .child(self.localized("点击密码即可直接尝试。")),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
@@ -1699,7 +2118,7 @@ impl QuickView {
                 div()
                     .text_size(crate::theme::body())
                     .text_color(palette.text)
-                    .child("输入加密文件的密码。"),
+                    .child(description),
             )
             .when_some(error, |this, error| {
                 this.child(
@@ -1709,37 +2128,41 @@ impl QuickView {
                         .child(error),
                 )
             })
-            .child(
-                div()
-                    .rounded(px(crate::theme::RADIUS_OVERLAY))
-                    .border_1()
-                    .border_color(palette.line)
-                    .bg(palette.panel)
-                    .p(px(12.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(icon(IconName::Lock, palette.accent, 18.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.0))
-                            .child(
-                                div()
-                                    .text_size(crate::theme::caption())
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(palette.text)
-                                    .child("该压缩包已加密"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(crate::theme::caption())
-                                    .text_color(palette.muted)
-                                    .child("输入密码后才能继续解压，密码只用于本次操作。"),
-                            ),
-                    ),
-            )
+            .when(!picker_open, |this| {
+                this.child(
+                    div()
+                        .rounded(px(crate::theme::RADIUS_OVERLAY))
+                        .border_1()
+                        .border_color(palette.line)
+                        .bg(palette.panel)
+                        .p(px(12.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .child(icon(IconName::Lock, palette.accent, 18.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .child(
+                                    div()
+                                        .text_size(crate::theme::caption())
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(palette.text)
+                                        .child(self.localized("该压缩包已加密")),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(crate::theme::caption())
+                                        .text_color(palette.muted)
+                                        .child(self.localized(
+                                            "输入密码后才能继续解压，密码只用于本次操作。",
+                                        )),
+                                ),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -1750,7 +2173,7 @@ impl QuickView {
                             .w(px(70.0))
                             .text_size(crate::theme::body())
                             .text_color(palette.sub)
-                            .child("文件名"),
+                            .child(self.localized("文件名")),
                     )
                     .child(
                         div()
@@ -1760,7 +2183,7 @@ impl QuickView {
                             .font_family(crate::theme::mono_font_family())
                             .text_size(crate::theme::caption())
                             .text_color(palette.text)
-                            .child(self.subtitle()),
+                            .child(archive_name),
                     ),
             )
             .child(
@@ -1772,15 +2195,16 @@ impl QuickView {
                         div()
                             .text_size(crate::theme::caption())
                             .text_color(palette.sub)
-                            .child("密码"),
+                            .child(self.localized("密码")),
                     )
                     .child(control_height(Input::new(&self.password_input))),
             )
+            .child(picker)
             .child(
                 div()
                     .text_size(crate::theme::caption())
                     .text_color(palette.muted)
-                    .child("提示：输入错误会停留在本窗口，可重新输入或取消。"),
+                    .child(self.localized("提示：输入错误会停留在本窗口，可重新输入或取消。")),
             )
             .child(div().flex_1())
             .child(
@@ -1790,7 +2214,7 @@ impl QuickView {
                     .gap(px(10.0))
                     .child(
                         Button::new("quick-pwd-cancel")
-                            .label("取消")
+                            .label(self.localized("取消"))
                             .outline()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(16.0))
@@ -1801,7 +2225,7 @@ impl QuickView {
                     .child(div().flex_1())
                     .child(
                         Button::new("quick-pwd-ok")
-                            .label("确定")
+                            .label(self.localized("确定"))
                             .primary()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(18.0))
@@ -1850,19 +2274,20 @@ impl QuickView {
                         .child(conflict_time(modified)),
                 )
         };
-        let rename_label = format!(
+        let rename_label = tr_fmt(
+            self.language,
             "重命名(R)：{}",
-            conflict
+            &[&conflict
                 .rename_path
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| conflict.name.clone())
+                .unwrap_or_else(|| conflict.name.clone())],
         );
         let apply_entity = cx.entity();
         let checkbox = div()
             .id("smart-apply-all")
             .role(Role::CheckBox)
-            .aria_label("应用到全部文件(A)")
+            .aria_label(self.localized("应用到全部文件(A)"))
             .aria_toggled(if self.smart_apply_all {
                 Toggled::True
             } else {
@@ -1885,7 +2310,7 @@ impl QuickView {
                 self.smart_apply_all,
                 false,
             ))
-            .child("应用到全部文件(A)");
+            .child(self.localized("应用到全部文件(A)"));
 
         div()
             .flex()
@@ -1903,7 +2328,7 @@ impl QuickView {
                         div()
                             .text_size(crate::theme::body())
                             .text_color(palette.sub)
-                            .child("存在相同的文件"),
+                            .child(self.localized("存在相同的文件")),
                     )
                     .when(total > 1, |this| {
                         this.child(
@@ -1929,12 +2354,12 @@ impl QuickView {
                     .flex()
                     .gap(px(12.0))
                     .child(time_panel(
-                        "现有文件",
+                        self.localized("现有文件"),
                         conflict.existing_size,
                         conflict.existing_modified,
                     ))
                     .child(time_panel(
-                        "要解压的文件",
+                        self.localized("要解压的文件"),
                         conflict.incoming_size,
                         conflict.incoming_modified,
                     )),
@@ -1943,18 +2368,18 @@ impl QuickView {
                 div()
                     .text_size(crate::theme::caption())
                     .text_color(palette.sub)
-                    .child("选择以下选项："),
+                    .child(self.localized("选择以下选项：")),
             )
             .child(self.smart_choice_row(
                 "smart-skip",
-                "跳过(S)".to_string(),
+                self.localized("跳过(S)").to_string(),
                 ConflictChoice::Skip,
                 choice == ConflictChoice::Skip,
                 cx,
             ))
             .child(self.smart_choice_row(
                 "smart-overwrite",
-                "覆盖(O)".to_string(),
+                self.localized("覆盖(O)").to_string(),
                 ConflictChoice::Overwrite,
                 choice == ConflictChoice::Overwrite,
                 cx,
@@ -1976,7 +2401,7 @@ impl QuickView {
                     .gap(px(10.0))
                     .child(
                         Button::new("smart-conflict-cancel")
-                            .label("取消")
+                            .label(self.localized("取消"))
                             .outline()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(16.0))
@@ -1986,7 +2411,7 @@ impl QuickView {
                     )
                     .child(
                         Button::new("smart-conflict-ok")
-                            .label("确定")
+                            .label(self.localized("确定"))
                             .primary()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(18.0))
@@ -2073,7 +2498,7 @@ impl QuickView {
                 div()
                     .text_size(crate::theme::body())
                     .text_color(palette.text)
-                    .child("目标文件夹中已存在同名文件。"),
+                    .child(self.localized("目标文件夹中已存在同名文件。")),
             )
             .when_some(conflict, |this, conflict| {
                 this.child(
@@ -2102,7 +2527,7 @@ impl QuickView {
                                 .border_color(palette.line)
                                 .bg(palette.panel)
                                 .child(div().text_size(crate::theme::caption()).text_color(palette.muted).child(
-                                    format!("现有文件 · {}", format_size(conflict.existing_size)),
+                                    tr_fmt(self.language, "现有文件 · {}", &[&format_size(conflict.existing_size)]),
                                 )),
                         )
                         .child(
@@ -2114,9 +2539,10 @@ impl QuickView {
                                 .border_color(palette.line)
                                 .bg(palette.panel)
                                 .child(div().text_size(crate::theme::caption()).text_color(palette.muted).child(
-                                    format!(
+                                    tr_fmt(
+                                        self.language,
                                         "压缩包中的文件 · {}",
-                                        format_size(conflict.incoming_size)
+                                        &[&format_size(conflict.incoming_size)],
                                     ),
                                 )),
                         ),
@@ -2126,16 +2552,16 @@ impl QuickView {
                 div()
                     .flex()
                     .gap(px(18.0))
-                    .child(self.radio_row("quick-skip", "跳过", choice == ConflictChoice::Skip, cx))
+                    .child(self.radio_row("quick-skip", self.localized("跳过"), choice == ConflictChoice::Skip, cx))
                     .child(self.radio_row(
                         "quick-overwrite",
-                        "覆盖",
+                        self.localized("覆盖"),
                         choice == ConflictChoice::Overwrite,
                         cx,
                     ))
                     .child(self.radio_row(
                         "quick-rename",
-                        "重命名",
+                        self.localized("重命名"),
                         choice == ConflictChoice::Rename,
                         cx,
                     )),
@@ -2145,7 +2571,7 @@ impl QuickView {
                     .text_size(crate::theme::caption())
                     .line_height(relative(1.5))
                     .text_color(palette.muted)
-                    .child("跳过：只解压不冲突的文件；覆盖：用压缩包内文件替换；重命名：解压到新的目标文件夹。"),
+                    .child(self.localized("跳过：只解压不冲突的文件；覆盖：用压缩包内文件替换；重命名：解压到新的目标文件夹。")),
             )
             .child(div().flex_1())
             .child(
@@ -2156,7 +2582,7 @@ impl QuickView {
                     .gap(px(10.0))
                     .child(
                         Button::new("quick-conflict-cancel")
-                            .label("取消")
+                            .label(self.localized("取消"))
                             .outline()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(16.0))
@@ -2166,7 +2592,7 @@ impl QuickView {
                     )
                     .child(
                         Button::new("quick-conflict-ok")
-                            .label("确定")
+                            .label(self.localized("确定"))
                             .primary()
                             .h(px(CONTROL_HEIGHT))
                             .px(px(18.0))
@@ -2240,12 +2666,47 @@ impl QuickView {
         } else {
             palette.accent
         };
+        let last_progress_stale = self
+            .last_progress
+            .is_some_and(|(at, _)| at.elapsed() >= Duration::from_secs(5));
         let status = if paused {
-            "已暂停"
-        } else if is_extract {
-            "正在解压"
+            self.localized("已暂停")
+        } else if self.running && last_progress_stale {
+            // 单条大文件/慢速嵌套包可能长时间不刷新百分比；明确提示仍在处理。
+            self.localized("处理中…")
         } else {
-            "正在压缩"
+            match self.phase {
+                Some(Phase::Nested) => self.localized("嵌套解压"),
+                Some(Phase::Scanning) => self.localized("安全扫描"),
+                Some(Phase::Password) => self.localized("尝试密码"),
+                Some(Phase::Preparing) => self.localized("准备中"),
+                Some(Phase::Testing) => self.localized("校验中"),
+                Some(Phase::Hashing) => self.localized("计算哈希"),
+                Some(Phase::Compressing) => self.localized("正在压缩"),
+                Some(Phase::Finished) => self.localized("完成"),
+                _ if is_extract => self.localized("正在解压"),
+                _ => self.localized("正在压缩"),
+            }
+        };
+        let processed = if self.total_bytes > 0 {
+            format!(
+                "{} / {}",
+                format_size(self.done_bytes),
+                format_size(self.total_bytes)
+            )
+        } else {
+            String::new()
+        };
+        let speed = if self.speed_bps >= 1.0 {
+            format!("{}/s", format_size(self.speed_bps as u64))
+        } else {
+            String::new()
+        };
+        let detail = match (processed.is_empty(), speed.is_empty()) {
+            (false, false) => format!("{processed} · {speed}"),
+            (false, true) => processed,
+            (true, false) => speed,
+            (true, true) => String::new(),
         };
         let item_count = if is_extract {
             total_entries
@@ -2270,7 +2731,11 @@ impl QuickView {
             .child(div().flex_1())
             .child(
                 Button::new("quick-pause")
-                    .label(if paused { "继续" } else { "暂停" })
+                    .label(if paused {
+                        self.localized("继续")
+                    } else {
+                        self.localized("暂停")
+                    })
                     .outline()
                     .h(px(CONTROL_HEIGHT))
                     .px(px(16.0))
@@ -2278,7 +2743,7 @@ impl QuickView {
             )
             .child(
                 Button::new("quick-stop")
-                    .label("停止")
+                    .label(self.localized("停止"))
                     .outline()
                     .h(px(CONTROL_HEIGHT))
                     .px(px(16.0))
@@ -2309,13 +2774,13 @@ impl QuickView {
                                     .text_size(crate::theme::caption())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(palette.sub)
-                                    .child("总计"),
+                                    .child(self.localized("总计")),
                             )
                             .child(
                                 div()
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.muted)
-                                    .child(format!("已用 {elapsed}")),
+                                    .child(tr_fmt(self.language, "已用 {}", &[&elapsed])),
                             ),
                     )
                     .child(
@@ -2338,6 +2803,15 @@ impl QuickView {
                             ),
                     )
                     .child(thick_bar(percent, 18.0, bar_color, &palette))
+                    .when(!detail.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(crate::theme::caption())
+                                .text_color(palette.muted)
+                                .child(detail),
+                        )
+                    })
                     .child(
                         div()
                             .flex_shrink_0()
@@ -2350,13 +2824,13 @@ impl QuickView {
                                     .text_size(crate::theme::caption())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(palette.sub)
-                                    .child("当前文件"),
+                                    .child(self.localized("当前文件")),
                             )
                             .child(
                                 div()
                                     .text_size(crate::theme::caption())
                                     .text_color(palette.muted)
-                                    .child(format!("{item_count} 项")),
+                                    .child(tr_fmt(self.language, "{} 项", &[&item_count])),
                             ),
                     )
                     .child(
@@ -2386,12 +2860,16 @@ impl QuickView {
                             .gap(px(5.0))
                             .child(detail_row(
                                 &palette,
-                                if is_extract { "压缩包" } else { "源文件" },
+                                if is_extract {
+                                    self.localized("压缩包")
+                                } else {
+                                    self.localized("源文件")
+                                },
                                 archive_name,
                             ))
                             .child(detail_row(
                                 &palette,
-                                "输出位置",
+                                self.localized("输出位置"),
                                 dest.as_ref()
                                     .map(|path| path.display().to_string())
                                     .unwrap_or_else(|| "—".to_string()),
@@ -2412,11 +2890,13 @@ impl QuickView {
         let palette = self.palette;
         let title = if success {
             match self.action {
-                QuickAction::ExtractTo { .. } | QuickAction::ExtractPreset { .. } => "解压完成",
-                QuickAction::Compress { .. } => "压缩完成",
+                QuickAction::ExtractTo { .. } | QuickAction::ExtractPreset { .. } => {
+                    self.localized("解压完成")
+                }
+                QuickAction::Compress { .. } => self.localized("压缩完成"),
             }
         } else {
-            "操作未完成"
+            self.localized("操作未完成")
         };
         let (color, soft, icon_name) = if success {
             (palette.ok, palette.ok_soft, IconName::CircleCheck)
@@ -2443,7 +2923,7 @@ impl QuickView {
             .when_some(open.clone(), |this, path| {
                 this.child(
                     Button::new("quick-open-folder")
-                        .label("打开所在位置")
+                        .label(self.localized("打开所在位置"))
                         .outline()
                         .h(px(CONTROL_HEIGHT))
                         .px(px(16.0))
@@ -2454,7 +2934,11 @@ impl QuickView {
             })
             .child(
                 Button::new("quick-done-close")
-                    .label(if success { "完成" } else { "关闭" })
+                    .label(if success {
+                        self.localized("完成")
+                    } else {
+                        self.localized("关闭")
+                    })
                     .primary()
                     .h(px(CONTROL_HEIGHT))
                     .px(px(18.0))
@@ -2548,10 +3032,10 @@ impl QuickView {
                             .flex()
                             .flex_col()
                             .gap(px(5.0))
-                            .child(detail_row(&palette, "用时", elapsed))
+                            .child(detail_row(&palette, self.localized("用时"), elapsed))
                             .child(detail_row(
                                 &palette,
-                                "位置",
+                                self.localized("位置"),
                                 open.as_ref()
                                     .map(|path| path.display().to_string())
                                     .unwrap_or_else(|| "—".to_string()),
@@ -2798,5 +3282,149 @@ fn unique_dir(dir: &Path) -> PathBuf {
             return candidate;
         }
         index += 1;
+    }
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    use gpui_kit::{point, AppContext, Modifiers, TestAppContext, VisualTestContext};
+    use rarkzip_engine::PasswordBook;
+
+    use super::{ExtractPreset, QuickAction, QuickView, Step};
+
+    struct LocalAppDataGuard {
+        previous: Option<std::ffi::OsString>,
+        #[cfg(not(windows))]
+        previous_xdg: Option<std::ffi::OsString>,
+    }
+
+    impl LocalAppDataGuard {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", path);
+            // Linux/macOS 的 data_dir() 使用 XDG_CONFIG_HOME，测试也要指向
+            // 临时目录，否则会读写真实的用户配置。
+            #[cfg(not(windows))]
+            let previous_xdg = std::env::var_os("XDG_CONFIG_HOME");
+            #[cfg(not(windows))]
+            std::env::set_var("XDG_CONFIG_HOME", path);
+            Self {
+                previous,
+                #[cfg(not(windows))]
+                previous_xdg,
+            }
+        }
+    }
+
+    impl Drop for LocalAppDataGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+            #[cfg(not(windows))]
+            match &self.previous_xdg {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
+    fn pump(visual: &mut VisualTestContext) {
+        visual.executor().advance_clock(Duration::from_millis(100));
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    /// 真实密码弹窗 UI：展开密码本列表，点击条目后自动提交并完成解压。
+    #[cfg(debug_assertions)]
+    #[gpui_kit::test]
+    fn password_prompt_book_picker_selects_entry(cx: &mut TestAppContext) {
+        let _serial = crate::UI_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let _env = LocalAppDataGuard::set(temp.path());
+        cx.update(gpui_kit::init);
+
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../rarkzip-engine/tests/fixtures/crypted.rar");
+        let archive = temp.path().join("crypted.rar");
+        std::fs::copy(&fixture, &archive).unwrap();
+
+        let mut book = PasswordBook::load(temp.path().join("passwords.json"));
+        book.add("unrar", "测试密码");
+        book.add("wrong-pass", "备用密码");
+
+        let action = QuickAction::ExtractPreset {
+            archive: archive.clone(),
+            preset: ExtractPreset::Here,
+            delete: false,
+        };
+        let (view, visual) = cx
+            .add_window_view(move |window, cx| QuickView::new_with_book(window, cx, action, book));
+
+        // 等后台解压线程发现 RAR 需要密码并切到密码步骤。
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            pump(visual);
+            if visual.read_entity(&view, |view, _| view.step) == Step::Password {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "等待密码弹窗超时，当前步骤：{:?}",
+                visual.read_entity(&view, |view, _| view.step)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            visual.read_entity(&view, |view, _| view.password_reveal),
+            "密码本列表应默认显示明文"
+        );
+
+        // 展开“从密码本选择”。
+        let toggle = visual
+            .debug_bounds("quick-pwd-book-toggle")
+            .expect("密码本选择按钮未渲染");
+        visual.simulate_click(
+            point(toggle.center().x, toggle.center().y),
+            Modifiers::default(),
+        );
+        pump(visual);
+        assert!(
+            visual.read_entity(&view, |view, _| view.password_picker_open),
+            "密码本列表未展开"
+        );
+
+        // 点击第一条密码（测试密码本中为 unrar），应自动填入并提交。
+        let row = visual
+            .debug_bounds("quick-password-book-0")
+            .expect("密码本条目未渲染");
+        visual.simulate_click(point(row.center().x, row.center().y), Modifiers::default());
+        pump(visual);
+        assert_eq!(
+            visual.read_entity(&view, |view, _| view.password.clone()),
+            Some("unrar".to_string()),
+            "选择密码后未填入并提交密码"
+        );
+
+        // 密码被引擎接受后，crypted.rar 中的 .gitignore 应解压到临时目录。
+        let output = temp.path().join(".gitignore");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !output.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "选择密码后解压超时，skipped：{:?}",
+                visual.read_entity(&view, |view, _| view.error.clone())
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(output.is_file());
     }
 }

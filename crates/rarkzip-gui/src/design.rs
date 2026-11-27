@@ -50,10 +50,11 @@ pub fn field_label(palette: &Palette, text: impl Into<SharedString>) -> Div {
 
 pub fn done_button(
     palette: &Palette,
+    language: crate::i18n::Language,
     onclick: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     Button::new("page-done")
-        .label("完成")
+        .label(crate::i18n::tr(language, "完成"))
         .icon(icon(IconName::Check, palette.accent_text, 15.0))
         .primary()
         .h(px(CONTROL_HEIGHT))
@@ -473,8 +474,10 @@ pub fn switch(
     palette: &Palette,
     id: impl Into<ElementId>,
     checked: bool,
+    label: impl Into<SharedString>,
     onclick: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
+    let label = label.into();
     div()
         .flex()
         .items_center()
@@ -483,7 +486,7 @@ pub fn switch(
             div()
                 .id(id)
                 .role(Role::Switch)
-                .aria_label("显示密码")
+                .aria_label(label.clone())
                 .aria_toggled(if checked {
                     Toggled::True
                 } else {
@@ -516,7 +519,7 @@ pub fn switch(
             div()
                 .text_size(crate::theme::font_px(13.0))
                 .text_color(palette.sub)
-                .child("显示密码"),
+                .child(label),
         )
         .into_any_element()
 }

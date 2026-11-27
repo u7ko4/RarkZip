@@ -5,7 +5,7 @@ use crate::archive::{open_archive, test_password, ArchiveInfo, OpenOptions};
 use crate::error::{EngineError, Result};
 use crate::format::{ArchiveFormat, Codepage};
 use crate::paths::{archive_stem, unique_path};
-use crate::progress::{check_cancelled, Phase, Progress, ProgressSink};
+use crate::progress::{check_cancelled, PasswordPrompt, Phase, Progress, ProgressSink};
 use crate::security::{delete_to_recycle, read_motw};
 use crate::sniff;
 
@@ -145,20 +145,24 @@ pub fn extract_archive(
 ) -> Result<ExtractOutcome> {
     let mut visited = HashSet::new();
     let depth = options.nested_depth;
-    extract_inner(path, options, sink, depth, &mut visited)
+    extract_inner(path, options, sink, depth, &mut visited, false)
 }
 
 /// 打开归档并自动解决密码：
 ///
-/// 1. 已知密码（父包/用户输入）；
+/// 1. 已确认的密码（首层密码本命中的密码 / 父包密码）；
 /// 2. 空密码；
-/// 3. 密码本顺序。
+/// 3. 首层仅对能快速校验密码的格式按密码本顺序尝试；嵌套层对所有格式
+///    尝试密码本，因为嵌套密码通常复用首层密码；
+/// 4. 通过 `ProgressSink::request_password` 请求用户输入。
 ///
-/// 全部失败才返回 `PasswordRequired`，由 UI/CLI 弹出输入框。
+/// RAR 等格式逐个试密需要实际解压条目，因此首层不在后台长时间试错，
+/// 直接弹窗；嵌套层在父包密码和密码本都失败后再弹窗。
 fn open_with_password_resolution(
     path: &Path,
     options: &ExtractOptions,
     sink: &dyn ProgressSink,
+    nested: bool,
 ) -> Result<(ArchiveInfo, Option<String>)> {
     let open = |password: Option<String>| {
         open_archive(
@@ -170,63 +174,127 @@ fn open_with_password_resolution(
         )
     };
 
-    let mut candidates = Vec::new();
-    if let Some(password) = &options.password {
-        if !password.is_empty() {
-            candidates.push(password.clone());
-        }
-    }
-    // 只有能快速校验密码的格式才自动尝试空密码/密码本；RAR、7z 等格式
-    // 每个候选都意味着完整解压，直接交给 UI/CLI 请求用户输入。
-    if crate::archive::supports_quick_password_test(path) {
-        if !candidates.iter().any(|candidate| candidate.is_empty()) {
-            candidates.push(String::new());
-        }
-        for password in &options.passwords {
-            if !password.is_empty() && !candidates.contains(password) {
-                candidates.push(password.clone());
-            }
-        }
-    }
+    let inherited = options
+        .password
+        .clone()
+        .filter(|password| !password.is_empty());
 
-    match open(options.password.clone()) {
-        // 未加密的中间层不应丢弃父层已确认的密码，否则更深层的嵌套包会失去继承。
-        Ok(info) if !info.encrypted => {
-            return Ok((
-                info,
-                options
-                    .password
-                    .clone()
-                    .filter(|password| !password.is_empty()),
-            ));
-        }
-        Ok(info) => {
-            if let Some(password) = &options.password {
+    // 1. 父层/首层已经验证过的密码。
+    if let Some(password) = &inherited {
+        match open(Some(password.clone())) {
+            Ok(info) if !info.encrypted => return Ok((info, inherited.clone())),
+            Ok(info) => {
+                // 非快速格式（典型是 RAR）：验证密码需要完整解压条目，
+                // 几十 GB 的单条目录像会重复跑一遍。直接交给解压后端验证，
+                // 密码错误时由上层重新弹窗（嵌套层在外层循环里重试）。
+                if !crate::archive::supports_quick_password_test(path) {
+                    return Ok((info, inherited.clone()));
+                }
                 match test_password(path, password) {
-                    Ok(true) => return Ok((info, Some(password.clone()))),
+                    Ok(true) => return Ok((info, inherited.clone())),
                     Ok(false) => {}
                     Err(EngineError::WrongPassword) | Err(EngineError::PasswordRequired) => {}
                     Err(error) => return Err(error),
                 }
             }
+            Err(EngineError::PasswordRequired) | Err(EngineError::WrongPassword) => {}
+            Err(error) => return Err(error),
         }
+    }
+
+    // 2. 空密码：同时确认中间层是否未加密。未加密的中间层必须保留父层密码，
+    // 否则更深层的嵌套包会失去继承。
+    match open(None) {
+        Ok(info) if !info.encrypted => return Ok((info, inherited.clone())),
+        Ok(_) => {}
         Err(EngineError::PasswordRequired) | Err(EngineError::WrongPassword) => {}
         Err(error) => return Err(error),
     }
 
-    let total = candidates.len();
-    for (index, candidate) in candidates.iter().enumerate() {
+    // 3. 首层只有可快速校验的格式才自动尝试密码本；嵌套层不跳过，
+    //    因为嵌套包的密码通常与首层相同，RAR/7z 也应直接尝试。
+    if nested || crate::archive::supports_quick_password_test(path) {
+        let mut candidates: Vec<String> = Vec::new();
+        candidates.push(String::new());
+        for password in &options.passwords {
+            if !password.is_empty() && !candidates.contains(password) {
+                candidates.push(password.clone());
+            }
+        }
+        let total = candidates.len() as u64;
+        for (index, candidate) in candidates.iter().enumerate() {
+            check_cancelled(sink)?;
+            sink.update(&Progress::new(
+                Phase::Password,
+                index as u64,
+                total,
+                format!("尝试密码 {}/{}", index + 1, total),
+            ));
+            match test_password(path, candidate) {
+                Ok(true) => {
+                    let info = open(Some(candidate.clone()))?;
+                    return Ok((info, Some(candidate.clone())));
+                }
+                Ok(false) => {}
+                Err(EngineError::WrongPassword) | Err(EngineError::PasswordRequired) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    // 4. 向 UI / CLI 请求密码。
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    for attempt in 1..=5u32 {
         check_cancelled(sink)?;
+        let message = if attempt == 1 {
+            if nested {
+                format!("嵌套压缩包「{name}」需要解压密码")
+            } else {
+                format!("压缩包「{name}」需要解压密码")
+            }
+        } else {
+            format!("密码错误，请重新输入「{name}」的解压密码")
+        };
         sink.update(&Progress::new(
             Phase::Password,
-            index as u64,
-            total as u64,
-            format!("尝试密码 {}/{}", index + 1, total),
+            attempt as u64,
+            5,
+            message.clone(),
         ));
-        match test_password(path, candidate) {
+        let prompt = PasswordPrompt {
+            archive: path.to_path_buf(),
+            nested,
+            attempt,
+            message,
+        };
+        let Some(entered) = sink.request_password(&prompt) else {
+            return if sink.is_cancelled() {
+                Err(EngineError::Cancelled)
+            } else {
+                Err(EngineError::PasswordRequired)
+            };
+        };
+        if entered.is_empty() {
+            continue;
+        }
+        if !crate::archive::supports_quick_password_test(path) {
+            // 非快速格式把密码交给解压后端验证；这里只确认归档能按该
+            // 密码打开（头加密时立即失败，条目加密则真正解压时才校验）。
+            match open(Some(entered.clone())) {
+                Ok(info) => return Ok((info, Some(entered))),
+                Err(EngineError::WrongPassword) | Err(EngineError::PasswordRequired) => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        match test_password(path, &entered) {
             Ok(true) => {
-                let info = open(Some(candidate.clone()))?;
-                return Ok((info, Some(candidate.clone())));
+                let info = open(Some(entered.clone()))?;
+                return Ok((info, Some(entered)));
             }
             Ok(false) => {}
             Err(EngineError::WrongPassword) | Err(EngineError::PasswordRequired) => {}
@@ -242,6 +310,7 @@ fn extract_inner(
     sink: &dyn ProgressSink,
     remaining_depth: u8,
     visited: &mut HashSet<PathBuf>,
+    nested: bool,
 ) -> Result<ExtractOutcome> {
     if !path.exists() {
         return Err(EngineError::NotFound(path.to_path_buf()));
@@ -260,7 +329,7 @@ fn extract_inner(
             .unwrap_or_default(),
     ));
 
-    let (info, working_password) = open_with_password_resolution(path, options, sink)?;
+    let (info, working_password) = open_with_password_resolution(path, options, sink, nested)?;
 
     let (dest, strip_prefix) = resolve_destination(path, &info, options);
     std::fs::create_dir_all(crate::paths::to_extended(&dest))?;
@@ -514,7 +583,13 @@ fn extract_inner(
                 amsi_scan: options.amsi_scan,
                 amsi_buffer_kb: options.amsi_buffer_kb,
             };
-            match extract_inner(written, &nested_options, sink, remaining_depth - 1, visited) {
+            match extract_nested_with_password_retry(
+                written,
+                &nested_options,
+                sink,
+                remaining_depth - 1,
+                visited,
+            ) {
                 Ok(nested) => {
                     outcome.nested_archives += 1 + nested.nested_archives;
                     outcome.files += nested.files;
@@ -554,6 +629,103 @@ fn extract_inner(
         ),
     ));
     Ok(outcome)
+}
+
+/// 嵌套包进度统一标记为 `Phase::Nested`，UI 才能区分“首层解压”和
+/// “嵌套解压”（嵌套百分比会从 0 重新开始，必须给出阶段提示）。
+struct NestedProgressSink<'a> {
+    inner: &'a dyn ProgressSink,
+}
+
+impl ProgressSink for NestedProgressSink<'_> {
+    fn update(&self, progress: &Progress) {
+        let mut tagged = progress.clone();
+        tagged.phase = Phase::Nested;
+        self.inner.update(&tagged);
+    }
+
+    fn warn(&self, message: &str) {
+        self.inner.warn(message);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
+    }
+
+    fn request_password(&self, prompt: &PasswordPrompt) -> Option<String> {
+        self.inner.request_password(prompt)
+    }
+}
+
+/// 嵌套归档解压失败为密码错误时，允许用户重新输入密码并原地重试。
+///
+/// 非快速格式（RAR 等）不再预先整条解压验证密码，而是直接把继承密码交给
+/// 解压后端；密码错误时在这里回退到密码请求，而不是静默跳过嵌套包。
+fn extract_nested_with_password_retry(
+    path: &Path,
+    options: &ExtractOptions,
+    sink: &dyn ProgressSink,
+    remaining_depth: u8,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<ExtractOutcome> {
+    let mut attempt_options = options.clone();
+    let tagged = NestedProgressSink { inner: sink };
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+
+    for attempt in 1..=5u32 {
+        match extract_inner(
+            path,
+            &attempt_options,
+            &tagged,
+            remaining_depth,
+            visited,
+            true,
+        ) {
+            Err(error) if error.is_password_related() => {
+                // 上一次尝试已在 visited 中登记了该路径，重试前移除。
+                visited.remove(path);
+                if let Ok(canonical) = std::fs::canonicalize(path) {
+                    visited.remove(&canonical);
+                }
+                check_cancelled(sink)?;
+                let message = if attempt == 1 {
+                    format!("嵌套压缩包「{name}」的密码不正确，请重新输入")
+                } else {
+                    format!("密码错误，请重新输入「{name}」的密码")
+                };
+                sink.update(&Progress::new(
+                    Phase::Password,
+                    attempt as u64,
+                    5,
+                    message.clone(),
+                ));
+                let prompt = PasswordPrompt {
+                    archive: path.to_path_buf(),
+                    nested: true,
+                    attempt,
+                    message,
+                };
+                let Some(password) = sink.request_password(&prompt) else {
+                    return if sink.is_cancelled() {
+                        Err(EngineError::Cancelled)
+                    } else {
+                        Err(EngineError::PasswordRequired)
+                    };
+                };
+                if password.is_empty() {
+                    continue;
+                }
+                attempt_options.password = Some(password);
+                // 不再重复尝试整个密码本，避免大 RAR 每个候选都完整解压。
+                attempt_options.passwords.clear();
+            }
+            other => return other,
+        }
+    }
+    Err(EngineError::PasswordRequired)
 }
 
 fn resolve_destination(

@@ -614,6 +614,7 @@ fn add_command(args: AddArgs) -> Result<()> {
         test_after,
         delete_sources: args.delete_sources,
         sfx: false,
+        volume_size: None,
     };
     let sink = ConsoleSink::default();
     let outcome = create_archive(&args.files, &args.archive, &options, &sink)?;
@@ -656,6 +657,7 @@ fn compress_here_command(args: CompressHereArgs) -> Result<()> {
         test_after: args.delete_sources,
         delete_sources: args.delete_sources,
         sfx: false,
+        volume_size: None,
     };
     let sink = ConsoleSink::default();
     let outcome = create_archive(&args.sources, &archive, &options, &sink)?;
@@ -703,6 +705,7 @@ fn compress_each_command(args: CompressEachArgs) -> Result<()> {
             test_after: false,
             delete_sources: false,
             sfx: false,
+            volume_size: None,
         };
         match create_archive(std::slice::from_ref(source), &archive, &options, &sink) {
             Ok(outcome) => {
@@ -751,6 +754,7 @@ fn add_sfx_command(args: AddArgs) -> Result<()> {
         test_after: true,
         delete_sources: false,
         sfx: false,
+        volume_size: None,
     };
     let sink = ConsoleSink::default();
     create_archive(&args.files, &temp, &options, &sink)?;
@@ -1229,6 +1233,17 @@ impl ProgressSink for ConsoleSink {
 
     fn is_cancelled(&self) -> bool {
         CANCELLED.load(Ordering::Relaxed)
+    }
+
+    fn request_password(&self, prompt: &rarkzip_engine::PasswordPrompt) -> Option<String> {
+        if !std::io::stdin().is_terminal() {
+            return None;
+        }
+        eprintln!("{}", prompt.message);
+        match rpassword::prompt_password("密码（留空跳过）：") {
+            Ok(password) if !password.is_empty() => Some(password),
+            _ => None,
+        }
     }
 }
 

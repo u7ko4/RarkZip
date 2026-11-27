@@ -1,5 +1,6 @@
 use crate::app::impls::ui::level_label;
 use crate::app::*;
+use rarkzip_crypt::text::TextEncoding;
 
 /// 所有自定义 select 控件共用的下拉类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -13,6 +14,10 @@ pub(crate) enum DropdownKind {
     SettingsSkin,
     NewFormat,
     NewZipAlgorithm,
+    NewVolumeSize,
+    CryptAlgorithm,
+    CryptEncoding,
+    SignatureSigningKey,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +95,7 @@ const ZIP_ALGORITHMS: [ZipAlgorithm; 4] = [
     ZipAlgorithm::Zstd,
 ];
 const MEMORY_OPTIONS: [u32; 4] = [1024, 2048, 4096, 8192];
+const VOLUME_SIZES: [u32; 10] = [0, 10, 50, 100, 200, 500, 700, 1024, 2048, 4096];
 const CODEPAGES: &[Codepage] = &Codepage::ALL;
 const THEME_MODES: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
 
@@ -139,8 +145,10 @@ impl MainView {
                 CODEPAGES
                     .iter()
                     .map(|codepage| {
-                        let option =
-                            DropdownOption::new(codepage.label().to_string(), *codepage == current);
+                        let option = DropdownOption::new(
+                            crate::i18n::tr(self.language, codepage.label()).to_string(),
+                            *codepage == current,
+                        );
                         if *codepage == Codepage::Auto {
                             option.separator_before()
                         } else {
@@ -154,7 +162,7 @@ impl MainView {
                 (0..=9)
                     .map(|level| {
                         DropdownOption::new(
-                            format!("{level} · {}", level_label(level)),
+                            format!("{level} · {}", tr(self.language, level_label(level))),
                             level == current,
                         )
                     })
@@ -201,9 +209,10 @@ impl MainView {
                         NewFormatChoice::Format(format) => {
                             DropdownOption::new(*label, !current_sfx && *format == current_format)
                         }
-                        NewFormatChoice::Sfx => {
-                            DropdownOption::new(format!("{label}（自解压）"), current_sfx)
-                        }
+                        NewFormatChoice::Sfx => DropdownOption::new(
+                            crate::i18n::tr_fmt(self.language, "{}（自解压）", &[label]),
+                            current_sfx,
+                        ),
                     })
                     .collect()
             }
@@ -217,6 +226,67 @@ impl MainView {
                     .iter()
                     .map(|algorithm| {
                         DropdownOption::new(algorithm.label().to_string(), *algorithm == current)
+                    })
+                    .collect()
+            }
+            DropdownKind::NewVolumeSize => {
+                let current = self
+                    .new_draft
+                    .as_ref()
+                    .map(|draft| draft.volume_size_mb)
+                    .unwrap_or(0);
+                VOLUME_SIZES
+                    .iter()
+                    .map(|mb| {
+                        DropdownOption::new(
+                            if *mb == 0 {
+                                crate::i18n::tr(self.language, "不分卷").to_string()
+                            } else {
+                                volume_size_label(*mb)
+                            },
+                            *mb == current,
+                        )
+                    })
+                    .collect()
+            }
+            DropdownKind::CryptAlgorithm => {
+                let current = self
+                    .crypt_state
+                    .as_ref()
+                    .map(|state| state.algorithm)
+                    .unwrap_or(rarkzip_crypt::Algorithm::Aes256);
+                rarkzip_crypt::Algorithm::UI
+                    .iter()
+                    .map(|algorithm| {
+                        DropdownOption::new(algorithm.label().to_string(), *algorithm == current)
+                    })
+                    .collect()
+            }
+            DropdownKind::CryptEncoding => {
+                let current = self
+                    .crypt_state
+                    .as_ref()
+                    .map(|state| state.encoding)
+                    .unwrap_or(TextEncoding::Base64);
+                [
+                    TextEncoding::Base64,
+                    TextEncoding::Base32,
+                    TextEncoding::Base10,
+                ]
+                .iter()
+                .map(|encoding| DropdownOption::new(encoding.label(), *encoding == current))
+                .collect()
+            }
+            DropdownKind::SignatureSigningKey => {
+                let Some(state) = self.signature_state.as_ref() else {
+                    return Vec::new();
+                };
+                let current = state.selected_signing_key();
+                state
+                    .signing_key_options()
+                    .into_iter()
+                    .map(|(fingerprint, label)| {
+                        DropdownOption::new(label, Some(fingerprint) == current)
                     })
                     .collect()
             }
@@ -252,7 +322,11 @@ impl MainView {
                         self.reload_archive(cx);
                     }
                     self.show_toast(
-                        format!("文本编码：{}", codepage.label()),
+                        crate::i18n::tr_fmt(
+                            self.language,
+                            "文本编码：{}",
+                            &[&crate::i18n::tr(self.language, codepage.label())],
+                        ),
                         ToastKind::Info,
                         cx,
                     );
@@ -294,6 +368,7 @@ impl MainView {
                             if let Some(draft) = &mut self.new_draft {
                                 draft.format = ArchiveFormat::Zip;
                                 draft.sfx = true;
+                                draft.volume_size_mb = 0;
                                 draft.error = None;
                             }
                             crate::app::impls::ensure_sfx_name(&name)
@@ -308,6 +383,51 @@ impl MainView {
                 if let Some(algorithm) = ZIP_ALGORITHMS.get(index).copied() {
                     if let Some(draft) = &mut self.new_draft {
                         draft.zip_algorithm = algorithm;
+                    }
+                }
+            }
+            DropdownKind::NewVolumeSize => {
+                if let Some(mb) = VOLUME_SIZES.get(index).copied() {
+                    if let Some(draft) = &mut self.new_draft {
+                        draft.volume_size_mb = mb;
+                        draft.error = None;
+                    }
+                }
+            }
+            DropdownKind::CryptAlgorithm => {
+                if let Some(algorithm) = rarkzip_crypt::Algorithm::UI.get(index).copied() {
+                    if let Some(state) = &mut self.crypt_state {
+                        state.algorithm = algorithm;
+                    }
+                    self.settings.crypt.algorithm = algorithm.code();
+                    self.save_settings();
+                }
+            }
+            DropdownKind::CryptEncoding => {
+                if let Some(encoding) = [
+                    TextEncoding::Base64,
+                    TextEncoding::Base32,
+                    TextEncoding::Base10,
+                ]
+                .get(index)
+                .copied()
+                {
+                    if let Some(state) = &mut self.crypt_state {
+                        state.encoding = encoding;
+                    }
+                    self.settings.crypt.text_encoding = match encoding {
+                        TextEncoding::Base64 => 0,
+                        TextEncoding::Base32 => 1,
+                        TextEncoding::Base10 => 2,
+                    };
+                    self.save_settings();
+                }
+            }
+            DropdownKind::SignatureSigningKey => {
+                if let Some(state) = &mut self.signature_state {
+                    if let Some((fingerprint, _)) = state.signing_key_options().get(index).cloned()
+                    {
+                        state.select_signing_key(fingerprint);
                     }
                 }
             }
@@ -393,6 +513,7 @@ impl MainView {
             let entity = cx.entity();
             let mut row = div()
                 .id(format!("dropdown-{}-{index}", kind.key()))
+                .debug_selector(|| format!("dropdown-{}-{index}", kind.key()))
                 .role(Role::Button)
                 .aria_label(label.clone())
                 .h(px(30.0))
@@ -475,7 +596,21 @@ impl DropdownKind {
             Self::SettingsSkin => "skin",
             Self::NewFormat => "new-format",
             Self::NewZipAlgorithm => "new-zip-algorithm",
+            Self::NewVolumeSize => "new-volume-size",
+            Self::CryptAlgorithm => "crypt-algorithm",
+            Self::CryptEncoding => "crypt-encoding",
+            Self::SignatureSigningKey => "signature-signing-key",
         }
+    }
+}
+
+pub(crate) fn volume_size_label(mb: u32) -> String {
+    if mb == 0 {
+        "不分卷".to_string()
+    } else if mb >= 1024 && mb % 1024 == 0 {
+        format!("{} GB", mb / 1024)
+    } else {
+        format!("{mb} MB")
     }
 }
 

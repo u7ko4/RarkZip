@@ -22,6 +22,7 @@ impl MainView {
             crate::design::uses_own_titlebar(self.custom_titlebar, window.window_decorations());
 
         let icon_button = |id: &'static str, name: IconName, tip: &'static str| {
+            let tip = self.localized(tip);
             Button::new(id)
                 .child(icon(name, palette.text, toolbar_icon_size))
                 .ghost()
@@ -45,8 +46,8 @@ impl MainView {
                     .hover(palette.accent_soft)
                     .active(palette.accent_soft),
             )
-            .tooltip("解压 (Ctrl+E)")
-            .accessibility_label("解压 (Ctrl+E)");
+            .tooltip(self.localized("解压 (Ctrl+E)"))
+            .accessibility_label(self.localized("解压 (Ctrl+E)"));
         let extract = if has_archive {
             extract
                 .on_click(cx.listener(|this, _, window, cx| this.start_extract_smart(window, cx)))
@@ -356,7 +357,7 @@ impl MainView {
                             .text_size(crate::theme::font_px(crate::theme::TITLEBAR_FONT_SIZE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
-                            .child(feature.title()),
+                            .child(feature.title_for(self.language)),
                     );
                 #[cfg(not(target_os = "windows"))]
                 let drag_area = drag_area
@@ -435,7 +436,7 @@ impl MainView {
                 .path
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| "归档".to_string());
+                .unwrap_or_else(|| self.localized("归档").to_string());
             crumb = crumb.child(
                 div()
                     .id("crumb-root")
@@ -503,7 +504,7 @@ impl MainView {
                     .small()
                     .w(px(crate::components::ICON_BUTTON_SIZE))
                     .h(px(crate::components::CONTROL_HEIGHT))
-                    .tooltip("上级目录 (Backspace)")
+                    .tooltip(self.localized("上级目录 (Backspace)"))
                     .disabled(current.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_up(cx))),
             )

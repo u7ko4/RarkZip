@@ -7,9 +7,10 @@ use crate::theme::{self, Palette, ThemeMode};
 
 impl MainView {
     pub(crate) fn export_settings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = crate::components::file_dialog(|| {
+        let settings_filter = self.localized("RarkZip 设置");
+        let Some(path) = crate::components::file_dialog(move || {
             rfd::FileDialog::new()
-                .add_filter("RarkZip 设置", &["json"])
+                .add_filter(settings_filter, &["json"])
                 .set_file_name("rarkzip-settings.json")
                 .save_file()
         }) else {
@@ -20,18 +21,23 @@ impl MainView {
             .and_then(|bytes| std::fs::write(&path, bytes).map_err(|error| error.to_string()));
         match result {
             Ok(()) => self.show_toast(
-                format!("设置已导出：{}", path.display()),
+                crate::i18n::tr_fmt(self.language, "设置已导出：{}", &[&path.display()]),
                 ToastKind::Success,
                 cx,
             ),
-            Err(error) => self.show_toast(format!("导出设置失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "导出设置失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 
     pub(crate) fn import_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = crate::components::file_dialog(|| {
+        let settings_filter = self.localized("RarkZip 设置");
+        let Some(path) = crate::components::file_dialog(move || {
             rfd::FileDialog::new()
-                .add_filter("RarkZip 设置", &["json"])
+                .add_filter(settings_filter, &["json"])
                 .pick_file()
         }) else {
             return;
@@ -54,10 +60,14 @@ impl MainView {
                     .get(self.settings.ui.settings_page)
                     .copied()
                     .unwrap_or(SettingsPage::General);
-                self.show_toast("设置已导入", ToastKind::Success, cx);
+                self.show_toast(self.localized("设置已导入"), ToastKind::Success, cx);
                 cx.notify();
             }
-            Err(error) => self.show_toast(format!("导入设置失败：{error}"), ToastKind::Error, cx),
+            Err(error) => self.show_toast(
+                crate::i18n::tr_fmt(self.language, "导入设置失败：{}", &[&error]),
+                ToastKind::Error,
+                cx,
+            ),
         }
     }
 }

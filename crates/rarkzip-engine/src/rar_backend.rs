@@ -127,6 +127,42 @@ pub(crate) fn list(
 }
 
 pub(crate) fn test_password(path: &Path, password: &str) -> Result<bool> {
+    // 头加密 RAR 的列表接口只能看到“头已加密”标记，不会校验密码；
+    // 必须实际读取第一个头才能确认密码。正确密码只解密头，不解压条目，
+    // 因此大 RAR 也能快速试密。
+    let header_encrypted = match Archive::with_password(path, password).open_for_listing() {
+        Ok(listing) => listing.has_encrypted_headers(),
+        Err(error) => {
+            return match map_unrar(error) {
+                EngineError::WrongPassword | EngineError::PasswordRequired => Ok(false),
+                other => Err(other),
+            };
+        }
+    };
+    if header_encrypted {
+        let archive = match Archive::with_password(path, password).open_for_processing() {
+            Ok(archive) => archive,
+            Err(error) => {
+                return match map_unrar(error) {
+                    EngineError::WrongPassword | EngineError::PasswordRequired => Ok(false),
+                    other => Err(other),
+                };
+            }
+        };
+        return match archive.read_header() {
+            Ok(_) => Ok(true),
+            Err(error)
+                if matches!(
+                    error.code,
+                    Code::BadPassword | Code::MissingPassword | Code::BadData
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(map_unrar(error)),
+        };
+    }
+
     let mut archive = Archive::with_password(path, password)
         .open_for_processing()
         .map_err(map_unrar)?;
@@ -294,7 +330,16 @@ pub(crate) fn extract(
             archive = header.skip().map_err(map_unrar)?;
             continue;
         }
-        archive = header.extract_to(to_extended(&target)).map_err(map_unrar)?;
+        archive = header.extract_to(to_extended(&target)).map_err(|error| {
+            let _ = std::fs::remove_file(to_extended(&target));
+            // 带密码解压时，RAR3 之类的错误密码会表现为 CRC/BadData，
+            // 与真正损坏难以区分；交给上层重新请求密码，而不是直接失败。
+            if password.is_some() && matches!(error.code, Code::BadPassword | Code::BadData) {
+                EngineError::WrongPassword
+            } else {
+                map_unrar(error)
+            }
+        })?;
         set_mtime(&target, dos_time_unix(file_time))?;
         if let Some(zone) = motw {
             if let Err(err) = apply_motw(&target, zone) {

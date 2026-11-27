@@ -2,13 +2,19 @@
 resolver = "2"
 members = [
     "crates/rarkzip-engine",
+    "crates/rarkzip-crypt",
     "crates/rarkzip-cli",
     "crates/rarkzip-gui",
     "crates/rarkzip-shell",
 ]
 
+# UnRAR passes unaligned wchar_t pointers to the volume callback; the local
+# patch replaces the slice construction with unaligned reads.
+[patch.crates-io]
+unrar-ng = { path = "vendor/unrar-ng" }
+
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"

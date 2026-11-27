@@ -18,3 +18,4 @@
 /port-test
 # Locally extracted Xvfb/Weston used for headless GUI verification
 /.tools
+/local

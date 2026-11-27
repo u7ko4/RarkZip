@@ -16,8 +16,9 @@ crossbeam-channel = "0.5.17"
 gpui-kit = "0.9.0"
 image = "0.25.9"
 rarkzip-cli = { path = "../rarkzip-cli" }
+rarkzip-crypt = { path = "../rarkzip-crypt" }
 rarkzip-engine = { path = "../rarkzip-engine" }
-rarkzip-shell = { version = "0.1.0", path = "../rarkzip-shell" }
+rarkzip-shell = { version = "0.1.1", path = "../rarkzip-shell" }
 open = "5.4.5"
 raw-window-handle = "0.6.2"
 rfd = "0.17.2"
@@ -38,3 +39,8 @@ windows = { version = "0.62.2", features = [
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3.0.12"
+
+[dev-dependencies]
+# 只启用 GPUI 核心测试窗口能力，避免 gpui-kit/test-support 引入 gpui-fast。
+gpui = { package = "gpui-pre", version = "=0.3.12", features = ["test-support"] }
+tempfile = "3.27.0"

@@ -14,6 +14,7 @@ use gpui_kit::App;
 
 #[cfg(windows)]
 mod platform {
+    use crate::i18n::{tr, tr_fmt, Language};
     use std::os::windows::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::thread;
@@ -29,14 +30,14 @@ mod platform {
 
     const CF_HDROP_FORMAT: u32 = 15;
 
-    fn open_clipboard() -> Result<(), String> {
+    fn open_clipboard(language: Language) -> Result<(), String> {
         for _ in 0..10 {
             if unsafe { OpenClipboard(None) }.is_ok() {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(20));
         }
-        Err("剪贴板正被其他程序占用，请稍后重试".to_string())
+        Err(tr(language, "剪贴板正被其他程序占用，请稍后重试").to_string())
     }
 
     fn absolute(path: &Path) -> PathBuf {
@@ -52,11 +53,11 @@ mod platform {
         }
     }
 
-    pub fn set_file_list(paths: &[PathBuf]) -> Result<(), String> {
+    pub fn set_file_list(paths: &[PathBuf], language: Language) -> Result<(), String> {
         if paths.is_empty() {
-            return Err("没有可复制的文件".to_string());
+            return Err(tr(language, "没有可复制的文件").to_string());
         }
-        open_clipboard()?;
+        open_clipboard(language)?;
         let result = (|| -> Result<(), String> {
             unsafe { EmptyClipboard() }.map_err(|error| error.to_string())?;
             let mut wide = Vec::<u16>::new();
@@ -65,7 +66,7 @@ mod platform {
                 wide.push(0);
             }
             if wide.is_empty() {
-                return Err("没有可复制的文件".to_string());
+                return Err(tr(language, "没有可复制的文件").to_string());
             }
             // 末尾再补一个 NUL，形成 Explorer 需要的双 NUL 结尾。
             wide.push(0);
@@ -73,13 +74,13 @@ mod platform {
             let header_size = std::mem::size_of::<DROPFILES>();
             let total = header_size + wide.len() * 2;
             let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, total) }
-                .map_err(|error| format!("分配剪贴板内存失败：{error}"))?;
+                .map_err(|error| tr_fmt(language, "分配剪贴板内存失败：{}", &[&error]))?;
             let pointer = unsafe { GlobalLock(handle) } as *mut u8;
             if pointer.is_null() {
                 unsafe {
                     let _ = GlobalFree(Some(handle));
                 }
-                return Err("锁定剪贴板内存失败".to_string());
+                return Err(tr(language, "锁定剪贴板内存失败").to_string());
             }
             let header = DROPFILES {
                 pFiles: header_size as u32,
@@ -106,7 +107,7 @@ mod platform {
                     unsafe {
                         let _ = GlobalFree(Some(handle));
                     }
-                    Err(format!("写入剪贴板失败：{error}"))
+                    Err(tr_fmt(language, "写入剪贴板失败：{}", &[&error]))
                 }
             }
         })();
@@ -114,11 +115,11 @@ mod platform {
         result
     }
 
-    pub fn file_list() -> Result<Vec<PathBuf>, String> {
+    pub fn file_list(language: Language) -> Result<Vec<PathBuf>, String> {
         if unsafe { IsClipboardFormatAvailable(CF_HDROP_FORMAT) }.is_err() {
             return Ok(Vec::new());
         }
-        open_clipboard()?;
+        open_clipboard(language)?;
         let result = (|| -> Result<Vec<PathBuf>, String> {
             let handle =
                 unsafe { GetClipboardData(CF_HDROP_FORMAT) }.map_err(|error| error.to_string())?;
@@ -145,21 +146,31 @@ mod platform {
 }
 
 #[cfg(windows)]
-pub fn set_file_list(_cx: &mut gpui_kit::App, paths: &[PathBuf]) -> Result<(), String> {
-    platform::set_file_list(paths)
+pub fn set_file_list(
+    _cx: &mut gpui_kit::App,
+    paths: &[PathBuf],
+    language: crate::i18n::Language,
+) -> Result<(), String> {
+    platform::set_file_list(paths, language)
 }
 
 #[cfg(windows)]
-pub fn file_list(_cx: &mut gpui_kit::App) -> Result<Vec<PathBuf>, String> {
-    platform::file_list()
+pub fn file_list(
+    _cx: &mut gpui_kit::App,
+    language: crate::i18n::Language,
+) -> Result<Vec<PathBuf>, String> {
+    platform::file_list(language)
 }
 
 #[cfg(not(windows))]
-pub fn set_file_list(cx: &mut App, paths: &[PathBuf]) -> Result<(), String> {
+use crate::i18n::{tr, Language};
+
+#[cfg(not(windows))]
+pub fn set_file_list(cx: &mut App, paths: &[PathBuf], language: Language) -> Result<(), String> {
     use gpui_kit::{ClipboardEntry, ClipboardItem, ExternalPaths};
 
     if paths.is_empty() {
-        return Err("没有可复制的文件".to_string());
+        return Err(tr(language, "没有可复制的文件").to_string());
     }
     cx.write_to_clipboard(ClipboardItem {
         entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
@@ -170,7 +181,7 @@ pub fn set_file_list(cx: &mut App, paths: &[PathBuf]) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub fn file_list(cx: &mut App) -> Result<Vec<PathBuf>, String> {
+pub fn file_list(cx: &mut App, _language: Language) -> Result<Vec<PathBuf>, String> {
     use gpui_kit::ClipboardEntry;
 
     let Some(item) = cx.read_from_clipboard() else {
